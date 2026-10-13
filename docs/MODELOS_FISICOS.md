@@ -60,7 +60,8 @@ com precisão muito superior à de G e de M isoladamente.
   3. `√Δ` é aproximada (erro de ~1 ulp) reescalando Δ por potências de 4; `q`, `q/a` e `c/q`
      são calculados em aritmética racional e arredondados uma única vez. Não há overflow nem
      underflow intermediário: coeficientes subnormais (≈ 10⁻³²⁴) ou próximos de 1,8 × 10³⁰⁸
-     dão raízes com erro de no máximo ~2 ulp (verificado contra referência de 60 dígitos).
+     dão raízes com erro de no máximo ≈ 2 ulp (máximo medido: 1,8 ulp contra referência de
+     60 dígitos; os testes usam margem de 4 ulp).
      Só é levantado erro quando a própria raiz não cabe em `float64`. Quando Δ excede o
      intervalo do `float64`, a interface informa "Δ > 1,8 × 10³⁰⁸" — o sinal continua exato.
 - **Limitação inerente:** perto de uma raiz dupla o problema é mal condicionado — uma
@@ -83,10 +84,12 @@ mesmas relações em 3D, vetoriais) e `time_to_reach_position`, que resolve
 móvel passa por uma posição.
 
 **Ponto de retorno.** A altura máxima `x = x0 + v0²/(2|a|)`, quando escrita em `float64`, fica
-ligeiramente acima ou abaixo do valor exato. Por isso, se `|Δ| ≤ 8ε·max(v0², 2|a|·max(|x0|, |x|))`
-(ε = 2,2 × 10⁻¹⁶), a posição é considerada atingida uma única vez, no instante `t = −v0/a`; a
-equação de Torricelli trata da mesma forma um radicando negativo apenas pelo arredondamento
-(resultado `|v| = 0`). Fora dessa faixa, de largura relativa ~10⁻¹⁵, nada muda.
+ligeiramente acima ou abaixo do valor exato. Por isso, quando o instante de retorno
+`t = −v0/a` não está no passado e `x ≠ x0`, se `|Δ| ≤ 2|a|·(ulp(x0) + ulp(x)) + 4ε·v0²`
+(ε = 2,2 × 10⁻¹⁶) a posição é considerada atingida uma única vez, nesse instante. A faixa
+corresponde ao erro de representação das próprias entradas: cerca de 1 ulp de `x0` e de `x`
+em posição. Fora dela vale a solução exata. A equação de Torricelli trata da mesma forma um
+radicando negativo apenas pelo arredondamento (até 8ε·max(v0², |2aΔx|); resultado `|v| = 0`).
 
 **Torricelli:** a relação vale para qualquer instante, passado ou futuro, em que o
 deslocamento ocorre; com `v0 = a = 0` nenhum deslocamento não nulo ocorre e é levantado erro.
@@ -111,9 +114,10 @@ das esferas (teorema das cascas; para dentro de um corpo a fórmula não vale); 
 newtoniana, sem correções relativísticas; fontes estáticas; `g = μ/r²` não inclui o efeito
 centrífugo da rotação do corpo (por isso μ/R² na Terra ≈ 9,798 m/s² difere de g0).
 
-**Domínio:** massas e μ ≥ 0 (resultado nulo para massa nula), r > 0. As divisões são feitas
-em sequência (`μ/r/r`), o que evita underflow de `r²` para distâncias minúsculas; resultados
-fora do intervalo do `float64` geram erro em vez de `inf`/`NaN`.
+**Domínio:** massas e μ ≥ 0 (resultado nulo para massa nula), r > 0. As operações são
+intercaladas (`μ/r/r` e `G·(m1/r)·(m2/r)`), o que evita under/overflow espúrio de `r²` e de
+`G·m1·m2`; resultados fora do intervalo do `float64` — maiores que ≈ 1,8 × 10³⁰⁸ ou, com
+massas não nulas, menores que o menor `float64` — geram erro em vez de `inf`, `NaN` ou 0.
 
 **Extensão prevista:** qualquer modelo com o método `acceleration(position, velocity, time)`
 segue o protocolo `GravityModel`. Correções relativísticas (dependentes da velocidade) e
@@ -156,9 +160,10 @@ repouso em referencial inercial); perturbações desprezadas (arrasto atmosféri
 achatamento J2, pressão de radiação solar, terceiros corpos); mecânica newtoniana; μ sem
 incerteza propagada.
 
-**Massas comparáveis.** As fórmulas usam o μ do corpo central, supondo a massa do veículo
-desprezível. Para a órbita **relativa** de dois corpos de massas comparáveis (Lua em torno
-da Terra, Terra em torno do Sol), use μ = G·(M₁ + M₂), informando-o diretamente:
+**Massa do segundo corpo.** As fórmulas usam o μ do corpo central, supondo a massa do
+veículo desprezível. Quando a massa do segundo corpo não é desprezível para a precisão
+desejada — Lua–Terra (efeito de ≈ 0,6 % no período) ou Terra–Sol (≈ 1,5 × 10⁻⁶) —, a órbita
+**relativa** usa μ = G·(M₁ + M₂), que pode ser informado diretamente:
 `aurora calcular periodo_orbital_eliptico mu=403503.2418km^3/s^2 a=384400km --em d`
 (μ_Terra + μ_Lua), que dá 27,28 d. Com o μ da Terra apenas, o resultado é ≈ 0,6 % maior
 (27,45 d). Nenhum dos dois reproduz exatamente o mês sideral (27,32 d): o valor de `a` e a
@@ -172,7 +177,7 @@ usa a·(1+e), bem condicionada mesmo com e → 1 (p/(1−e) perderia precisão);
 
 ## 7. Validação
 
-Os testes em `tests/` verificam três tipos de propriedade:
+Os testes em `tests/` verificam quatro tipos de propriedade:
 
 1. **Fórmulas diretas** — o resultado coincide com a expressão da especificação.
 2. **Identidades analíticas independentes** — por exemplo: v·T = 2πr na órbita circular;

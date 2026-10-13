@@ -137,3 +137,28 @@ def test_estado_vetorial_com_overflow_gera_erro():
     # NUME-6: antes retornava inf/nan silenciosamente.
     with pytest.raises(DomainError):
         constant_acceleration_state([0, 0, 0], [1e200, 0, 0], [0, 0, 0], 1e200)
+
+
+# --- regressões da revisão das correções ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "args, expected",
+    [
+        ((1e9, 0.0, -1e-6, 999999999.999999), (1.3810679320049757,)),  # cai 1 µm: atingido
+        ((1e9, 0.0, -1e-6, 1000000000.000001), ()),  # alvo acima de corpo em repouso que desce
+        ((1e9, -1e-9, -1e-6, 999999999.999999), (1.3800682940436002,)),
+        ((10**15, 1, -1, 10**15 + 2), ()),  # 1,5 m acima do ponto de retorno
+        ((10**15, 1, -1, 10**15 - 1), (2.732050807568877,)),
+        ((6378137.0, 0.0, -9.81, 6378137.0 - 1e-8), (4.570112613295919e-05,)),
+        ((6.4e6, 1e-4, 9.8, 6.4e6), (0.0,)),  # já está no alvo em t = 0
+    ],
+)
+def test_tolerancia_do_ponto_de_retorno_nao_depende_da_origem(args, expected):
+    # A primeira versão da correção usava uma faixa proporcional a |x0| e errava estes casos.
+    assert time_to_reach_position(*args) == pytest.approx(expected, rel=1e-12)
+
+
+def test_raiz_negativa_fora_do_intervalo_nao_esconde_a_resposta():
+    # Raízes ≈ 1 s e ≈ −2e310 s: a segunda é descartada antes da verificação de finitude.
+    assert time_to_reach_position(0.0, 1.0, 1e-310, 1.0) == pytest.approx((1.0,), rel=1e-15)

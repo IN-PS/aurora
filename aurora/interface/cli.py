@@ -198,7 +198,7 @@ def _parse_assignments(formula: Formula, items: Sequence[str]) -> dict[str, floa
         name, sep, raw = item.partition("=")
         name = name.strip()
         if not sep or not name:
-            raise InvalidParameterError(f"Entrada inválida {item!r}: use o formato NOME=VALOR, ex.: r=6778km.")
+            raise InvalidParameterError(f"Entrada inválida {item.strip()!r}: use o formato NOME=VALOR, ex.: r=6778km.")
         if name in values:
             raise InvalidParameterError(f"Parâmetro '{name}' informado mais de uma vez.")
         param = formula.parameter(name)
@@ -345,7 +345,6 @@ class _Parser(argparse.ArgumentParser):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault("formatter_class", _Formatter)
         kwargs.setdefault("add_help", False)
-        kwargs.setdefault("allow_abbrev", False)
         super().__init__(*args, **kwargs)
         self._positionals.title = "argumentos"
         self._optionals.title = "opções"
@@ -357,12 +356,29 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _number(text: str) -> Fraction:
-    """Coeficiente numérico com o valor decimal exato digitado (``0.1`` é exatamente 1/10)."""
+    """Coeficiente numérico com o valor decimal exato digitado (``0.1`` é exatamente 1/10).
+
+    Valores que não são números normais em ``float64`` usam o valor do ``float`` (o mesmo que é
+    exibido), de modo que a equação mostrada é sempre a equação resolvida; valores não nulos
+    abaixo do menor ``float64`` são rejeitados. Isso também limita o custo da aritmética exata.
+    """
     try:
-        units.parse_number(text)  # valida o formato e o intervalo representável
+        value = units.parse_number(text)  # valida o formato e o intervalo representável
     except AuroraError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
-    return Fraction(text.strip().replace(",", "."))
+    text = text.strip().replace(",", ".")
+    if value == 0.0:
+        if any(ch in "123456789" for ch in re.split("[eE]", text)[0]):
+            raise argparse.ArgumentTypeError(
+                f"Valor {text!r} é menor, em módulo, que o menor número representável em float64 (≈ 4,9e-324)."
+            )
+        return Fraction(0)
+    if abs(value) < sys.float_info.min:  # subnormal: usa o valor exibido
+        return Fraction(value)
+    try:
+        return Fraction(text)
+    except ValueError:  # ex.: mais dígitos do que o limite de conversão de inteiros do Python
+        return Fraction(value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -451,13 +467,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_output()
     parser = build_parser()
     args, extras = parser.parse_known_args(_protect_negative_numbers(sys.argv[1:] if argv is None else argv))
-    if extras:
+    if extras and getattr(args, "comando", None) == "calcular":
         # Antes do Python 3.13, uma opção entre a chave da fórmula e os valores (ex.:
-        # "calcular F --json mu=1 r=1") deixa os valores como "não reconhecidos".
-        if getattr(args, "comando", None) == "calcular" and not any(e.startswith("-") for e in extras):
-            args.valores = [*args.valores, *extras]
-        else:
-            parser.error(f"unrecognized arguments: {' '.join(e.strip() for e in extras)}")
+        # "calcular velocidade_escape --json mu=1 r=1") deixa os valores como "não reconhecidos".
+        args.valores = [*args.valores, *(e for e in extras if not e.startswith("-"))]
+        extras = [e for e in extras if e.startswith("-") and e != "--"]
+    if extras:
+        parser.error(f"unrecognized arguments: {' '.join(e.strip() for e in extras)}")
     try:
         return args.handler(args)
     except AuroraError as exc:

@@ -137,3 +137,12 @@ def test_modelo_newtoniano_valida_fontes_e_velocidade():
     model = NewtonianGravity([PointMass.from_body(EARTH)])
     with pytest.raises(InvalidParameterError):
         model.acceleration(np.array([7e6, 0, 0]), velocity="lixo")
+
+
+def test_numerador_da_forca_nao_sofre_underflow():
+    # G·m1·m2 sofria underflow para massas e distâncias minúsculas (resultado 0 N silencioso).
+    assert gravitational_force(1e-170, 1e-170, 1e-170) == pytest.approx(G, rel=1e-15)
+    with pytest.raises(DomainError, match="menor valor representável"):
+        gravitational_force(1e-300, 1e-300, 1e10)
+    with pytest.raises(DomainError, match="menor valor representável"):
+        gravitational_acceleration(1.0, 1e170)

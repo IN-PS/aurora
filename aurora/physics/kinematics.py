@@ -24,7 +24,7 @@ from ..core.formula import register_formula
 from ..core.validation import as_nonzero, as_real, as_vector
 from ..errors import DomainError
 from . import hypotheses as H
-from .quadratic import _fraction_to_float, _solve_rational
+from .quadratic import _distinct_real_roots, _fraction_to_float
 
 # Tolerância relativa para tratar como nulo um Δ ou radicando que só difere de zero pelo
 # arredondamento das entradas (ponto de retorno do movimento).
@@ -166,10 +166,10 @@ def time_to_reach_position(x0: float, v0: float, a: float, x: float) -> tuple[fl
     aritmética racional exata. Retorna uma tupla ordenada com zero, um ou dois instantes (s).
 
     Se ``x`` coincide com o ponto de retorno (altura máxima, por exemplo) a menos do erro de
-    representação das entradas — ``|Δ| ≤ 8ε·max(v0², 2·|a|·max(|x0|, |x|))`` —, a posição é
-    considerada atingida uma única vez, no instante de retorno ``t = −v0/a``. Sem essa
-    tolerância, ``x = v0²/(2g)`` arredondado para ``float`` seria declarado inatingível em
-    cerca de metade dos casos.
+    representação das entradas — ``|Δ| ≤ 2·|a|·(ulp(x0) + ulp(x)) + 4ε·v0²``, com o instante de
+    retorno ``t = −v0/a ≥ 0`` e ``x ≠ x0`` —, a posição é considerada atingida uma única vez,
+    nesse instante. Sem essa tolerância, ``x = x0 + v0²/(2g)`` arredondado para ``float``
+    seria declarado inatingível em cerca de metade dos casos.
 
     Se ``a = v0 = 0`` e ``x = x0`` o móvel permanece sempre na posição e há infinitas
     soluções: levanta ``DomainError``.
@@ -185,18 +185,20 @@ def time_to_reach_position(x0: float, v0: float, a: float, x: float) -> tuple[fl
         candidates: tuple[float, ...] = (_fraction_to_float(-gap / fv0),)
     else:
         delta = fv0 * fv0 - 2 * fa * gap
-        scale = max(fv0 * fv0, 2 * abs(fa) * max(abs(fx0), abs(fx)))
-        if abs(delta) <= Fraction(_ROUNDING_TOL) * scale:
-            candidates = (_fraction_to_float(-fv0 / fa),)
+        turning_time = -fv0 / fa
+        # Erro de representação de x0 e x (≈ 1 ulp cada) e de v0² (alguns ε relativos).
+        representation = 2 * abs(fa) * (Fraction(math.ulp(x0)) + Fraction(math.ulp(x))) + Fraction(
+            4 * sys.float_info.epsilon
+        ) * fv0 * fv0
+        if gap != 0 and turning_time >= 0 and abs(delta) <= representation:
+            candidates = (_fraction_to_float(turning_time),)
         elif delta < 0:
             return ()
+        elif delta == 0:
+            candidates = (_fraction_to_float(turning_time),)
         else:
-            try:
-                _, _, candidates = _solve_rational(fa / 2, fv0, gap)
-            except DomainError:
-                raise DomainError(
-                    "Instante de passagem fora do intervalo representável em ponto flutuante de 64 bits."
-                ) from None
+            roots = _distinct_real_roots(fa / 2, fv0, gap, delta)
+            candidates = tuple(_fraction_to_float(t) for t in roots if t >= 0)  # descarta t < 0 antes
     times = tuple(t + 0.0 for t in candidates if t >= 0.0)
     if not all(math.isfinite(t) for t in times):
         raise DomainError("Instante de passagem fora do intervalo representável em ponto flutuante de 64 bits.")

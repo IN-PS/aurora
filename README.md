@@ -25,7 +25,7 @@ Instituto Regional de Pesquisas Científicas, Tecnologia e Engenharia do Sul de 
 - **Calculadora de equações do 2º grau** com discriminante exato (aritmética racional) e
   fórmula numericamente estável: os decimais digitados são lidos sem arredondamento
   (`x² + 0,6x + 0,09` tem raiz dupla), raízes próximas não são confundidas com raiz dupla, e
-  coeficientes de 10⁻³²⁴ a 10³⁰⁸ dão raízes com erro de poucos ulp.
+  coeficientes de 10⁻³²⁴ a 10³⁰⁸ dão raízes com erro de no máximo ≈ 2 ulp.
 - **Motor de fórmulas físicas**: 18 fórmulas registradas, em unidades do SI, cada uma com
   expressão, unidade do resultado, unidade e descrição de cada parâmetro e lista de
   hipóteses — acessíveis pela interface (`aurora formulas` / `aurora calcular`):
@@ -44,7 +44,7 @@ Instituto Regional de Pesquisas Científicas, Tecnologia e Engenharia do Sul de 
 - **Procedência explícita**: todo resultado físico (fórmulas e órbitas) é marcado como
   *cálculo analítico* e exibido com aviso de que não é medição.
 - **Interface de linha de comando** em português, com exportação em JSON.
-- **220 testes automatizados** (pytest), incluindo identidades analíticas, casos de
+- **239 testes automatizados** (pytest), incluindo identidades analíticas, casos de
   referência conhecidos (órbita geoestacionária, período de uma órbita de 1 ua), conversão
   ida e volta elementos → estado → elementos e entradas extremas. Integração contínua no
   GitHub Actions com Python 3.10 a 3.14.
@@ -112,7 +112,10 @@ Observações:
   (`"6.778.137 km"`) são rejeitados com mensagem explicativa. As entradas são sempre
   ecoadas convertidas para o SI, para conferência.
 - Números negativos funcionam diretamente (`aurora quadratica 1 -1e8 1`).
-- As opções podem vir em qualquer posição (`aurora calcular F --json mu=1 r=1`).
+- As opções podem vir em qualquer posição (`aurora calcular velocidade_escape --json mu=1 r=1`)
+  e podem ser abreviadas quando não houver ambiguidade (`--alt` para `--altitude`).
+- Em `quadratica`, coeficientes não nulos menores que o menor `float64` (≈ 4,9 × 10⁻³²⁴) são
+  rejeitados, para que a equação exibida seja sempre a resolvida.
 - `--json` exporta o resultado com entradas, unidades, hipóteses e procedência. O texto é
   escrito em ASCII com escapes `\uXXXX` (μ, ç, ☉…), que qualquer leitor de JSON decodifica,
   para não ser corrompido em terminais que não usam UTF-8. Valores não finitos, como um Δ
@@ -125,7 +128,8 @@ comando, com saída em texto ou JSON. No Android ela pode ser usada em um termin
 como o [Termux](https://termux.dev):
 
 1. Instale o Termux pelo F-Droid ou pelas versões publicadas no GitHub do projeto (os
-   mantenedores não recomendam a versão da Google Play, que está desatualizada).
+   mantenedores recomendam essas fontes; a versão da Google Play é um ramo experimental,
+   com funcionalidades ausentes).
 2. No Termux:
 
    ```bash

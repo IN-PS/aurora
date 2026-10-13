@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+import numpy as np
+
 from ..data.constants import AU
 from ..errors import InvalidParameterError, NotFoundError, UnitError
 from .validation import as_real
@@ -139,28 +141,37 @@ def _check_dimension(unit: Unit, expected: Dimension | None) -> None:
         )
 
 
-def _finite_conversion(result: float, value: float, unit: Unit) -> float:
-    if not math.isfinite(result):
+def _conversion_input(value: object) -> float | np.ndarray:
+    """Valor escalar real finito ou array NumPy de reais finitos (convertido para ``float64``)."""
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind not in "iuf" or not np.all(np.isfinite(value)):
+            raise InvalidParameterError("O array 'valor' deve conter apenas números reais finitos.")
+        return value.astype(np.float64)
+    return as_real("valor", value)
+
+
+def _finite_conversion(result: float | np.ndarray, unit: Unit) -> float | np.ndarray:
+    if not np.all(np.isfinite(result)):
         raise InvalidParameterError(
-            f"A conversão de {value!r} para/de '{unit.symbol}' excede o intervalo representável em ponto flutuante."
+            f"A conversão para/de '{unit.symbol}' excede o intervalo representável em ponto flutuante."
         )
     return result
 
 
 def to_si(value: float, unit: str, expected: Dimension | None = None) -> float:
-    """Converte ``value`` expresso em ``unit`` para o SI."""
-    value = as_real("valor", value)
+    """Converte ``value`` (escalar ou array NumPy) expresso em ``unit`` para o SI."""
+    value = _conversion_input(value)
     u = get_unit(unit)
     _check_dimension(u, expected)
-    return _finite_conversion(value * u.factor, value, u)
+    return _finite_conversion(value * u.factor, u)
 
 
 def from_si(value: float, unit: str, expected: Dimension | None = None) -> float:
-    """Converte ``value`` (em SI) para ``unit``."""
-    value = as_real("valor", value)
+    """Converte ``value`` (escalar ou array NumPy, em SI) para ``unit``."""
+    value = _conversion_input(value)
     u = get_unit(unit)
     _check_dimension(u, expected)
-    return _finite_conversion(value / u.factor, value, u)
+    return _finite_conversion(value / u.factor, u)
 
 
 def display_alternatives(si_symbol: str) -> tuple[str, ...]:

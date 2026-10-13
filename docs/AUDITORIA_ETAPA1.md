@@ -44,12 +44,13 @@ aurora.errors  ←  aurora.data  ←  aurora.core  ←  aurora.physics  ←  aur
 | Momento | Resultado |
 |---|---|
 | Antes das correções (commit `06219b9`) | **143 passaram, 0 falharam** em Python 3.10.20, 3.11.17, 3.12.3, 3.13.16 e 3.14.6; também com NumPy 1.24.4 |
-| Depois das correções | **220 passaram, 0 falharam** (143 originais + 77 novos); números por versão na seção 9 |
-| Testes novos executados contra o código original | **61 dos 77 falham** — confirmam que reproduzem os defeitos corrigidos |
+| Depois das correções | **239 passaram, 0 falharam** (143 originais + 96 novos); números por versão na seção 10 |
+| Testes novos executados contra o código original | **69 dos 96 falham** — confirmam que reproduzem os defeitos corrigidos |
 
-Os 16 testes novos que já passavam no código original cobrem comportamentos que estavam
-corretos e passam a ser protegidos, ou defeitos que só aparecem no Python 3.10–3.12 (ordem
-das opções da CLI), agora exercitados pela integração contínua.
+Os 27 testes novos que já passavam no código original cobrem comportamentos que estavam
+corretos e passam a ser protegidos (inclusive contra as regressões encontradas na revisão
+da seção 9), ou defeitos que só aparecem no Python 3.10–3.12 (ordem das opções da CLI),
+agora exercitados pela integração contínua.
 
 A suíte original passava inteira apesar dos defeitos porque testava apenas casos centrais
 (coeficientes até 10²⁰⁰, estados orbitais alinhados aos eixos, opções no fim da linha de
@@ -104,12 +105,12 @@ ARCH = arquitetura/documentação).
 |---|---|---|---|---|
 | 1 | Alta | ARCH-1 | O Δ "exato" era calculado sobre os `float` binários, não sobre os decimais digitados: `quadratica 1 0.6 0.09` = (x + 0,3)² era classificada como "complexas conjugadas". | **Corrigido.** A CLI lê os decimais como frações exatas; `solve_quadratic` usa o valor exato de `int`/`Fraction`. |
 | 2 | Média | NUME-1, ARCH-2, CLI-2 | Coeficientes ≈ 10³⁰⁸ com raízes representáveis (ex.: 10³⁰⁸x² − 10³⁰⁸ = 0) causavam `OverflowError` e traceback. | **Corrigido.** q, q/a e c/q calculados em aritmética racional e arredondados uma vez. |
-| 3 | Média | NUME-2 | Coeficientes subnormais davam raízes erradas ((−1, 1) em vez de (−1,618; 0,618)) ou erro espúrio. | **Corrigido** pela mesma mudança; erro ≤ 1,5 ulp em todas as escalas testadas. |
-| 4 | Média | PHYS-1 | `time_to_reach_position` declarava a altura máxima inatingível em ~50 % dos casos (arredondamento de v0²/2g). | **Corrigido.** Tolerância de arredondamento no ponto de retorno: 0/20 000 falhas e 0/20 000 falsos positivos. |
+| 3 | Média | NUME-2 | Coeficientes subnormais davam raízes erradas ((−1, 1) em vez de (−1,618; 0,618)) ou erro espúrio. | **Corrigido** pela mesma mudança; erro máximo medido de 1,8 ulp em todas as escalas testadas. |
+| 4 | Média | PHYS-1 | `time_to_reach_position` declarava a altura máxima inatingível em ~50 % dos casos (arredondamento de v0²/2g). | **Corrigido.** Tolerância igual ao erro de representação das entradas (≈ 1 ulp de x0 e x), aplicada só se o retorno não está no passado: 0/20 000 falhas e 0/20 000 falsos positivos com x0 até ±10⁶ m. |
 | 5 | Média | PHYS-3 | Torricelli retornava \|v\| = 0 para móvel em repouso (v0 = a = 0) com Δx ≠ 0. | **Corrigido** (erro de domínio). |
 | 6 | Média | ORBI-1 | Trajetórias quase radiais (ex.: lançamento vertical com 5 cm/s horizontais) eram rotuladas "parabólicas" com a = T = ∞, mesmo fortemente ligadas. | **Corrigido.** Parabólica exige também energia desprezível; senão, o sinal de ε decide. |
-| 7 | Média | NUME-3, PHYS-2, ARCH-3, CLI-3 | Gravitação: r² sofria underflow (ZeroDivisionError, traceback) ou overflow (resultado 0); a versão vetorial retornava inf/NaN. | **Corrigido.** Divisões sucessivas, verificação de finitude e rede de segurança no registro de fórmulas. |
-| 8 | Média | CLI-1 | `aurora calcular F --json mu=1 r=1` falhava no Python 3.10–3.12; opção entre dois valores falhava em todas as versões. | **Corrigido** (`parse_known_args`); verificado no 3.10. |
+| 7 | Média | NUME-3, PHYS-2, ARCH-3, CLI-3 | Gravitação: r² sofria underflow (ZeroDivisionError, traceback) ou overflow (resultado 0); a versão vetorial retornava inf/NaN. | **Corrigido.** Operações intercaladas (μ/r/r, G·(m1/r)·(m2/r)), erro claro para resultado fora do `float64` (inclusive underflow com massas não nulas) e rede de segurança no registro de fórmulas. |
+| 8 | Média | CLI-1 | `aurora calcular velocidade_escape --json mu=1 r=1` falhava no Python 3.10–3.12; opção entre dois valores falhava em todas as versões. | **Corrigido** (`parse_known_args`); verificado no 3.10. |
 | 9 | Média | CLI-4 | `--json` trocava μ, ☉, ç… por "?" quando a saída não era UTF-8 (ex.: redirecionamento no Windows). | **Corrigido** (JSON em ASCII com escapes `\uXXXX`). |
 | 10 | Média | NUME-4, ARCH-12 | "1.000 km" era lido silenciosamente como 1 km; "6.778.137 km" gerava "unidade desconhecida '.137 km'". | **Corrigido em parte.** Números com mais de um separador são rejeitados com mensagem clara; o separador único continua decimal (decisão de projeto, documentada no README; as entradas são ecoadas em SI). |
 | 11 | Baixa | ORBI-2 | Apoapse calculada como p/(1−e) perdia precisão com e → 1 e quebrava r_p + r_a = 2a. | **Corrigido** (a·(1+e)). |
@@ -120,9 +121,9 @@ ARCH = arquitetura/documentação).
 | 16 | Baixa | PHYS-10, CLI-8 | Erro de `--raio`/altitude citava o parâmetro interno "radius". | **Corrigido.** |
 | 17 | Baixa | NUME-7 | Leitura de grandezas com tempo quadrático em textos longos (5 s com 40 000 caracteres). | **Corrigido** (0,1 ms). |
 | 18 | Baixa | NUME-8 | Saídas exibiam "-0 N". | **Corrigido.** |
-| 19 | Baixa | NUME-9 | Conversões de unidade não validavam o valor; tipos errados geravam exceções Python genéricas. | **Corrigido.** |
+| 19 | Baixa | NUME-9 | Conversões de unidade não validavam o valor; tipos errados geravam exceções Python genéricas. | **Corrigido** (escalares e arrays NumPy validados). |
 | 20 | Baixa | CLI-5, ARCH-7 | Mensagens de erro de uso do `argparse` em inglês. | **Corrigido** (tabela de tradução, com retorno à mensagem original se não houver padrão). |
-| 21 | Baixa | CLI-6 | `--help` e `--version` não eram reconhecidos. | **Corrigido** (aliases). |
+| 21 | Baixa | CLI-6 | `--help` e `--version` não eram reconhecidos. | **Corrigido** (aliases). Consequência: as abreviações `--ver`/`--vers` passaram a ser ambíguas (mensagem traduzida); as demais abreviações continuam aceitas. |
 | 22 | Baixa | CLI-7 | O espaço inserido para proteger números negativos aparecia nas mensagens. | **Corrigido.** |
 | 23 | Baixa | CLI-9 | `--em` exibia ∞ para resultado finito; sentinelas "inf"/"nan" do JSON não documentadas. | **Corrigido** (erro claro) e documentado. |
 | 24 | Baixa | ARCH-11 | CLI exibia "Δ = ∞" para Δ finito que só excede o `float64`. | **Corrigido** ("Δ > 1,8 × 10³⁰⁸ …"). |
@@ -154,9 +155,9 @@ ARCH = arquitetura/documentação).
 
 | # | Gravidade | Achados | Problema | Situação |
 |---|---|---|---|---|
-| 43 | Baixa | ORBI-6, NUME-12, CLI-12, ARCH-13 | Lacunas: estados orbitais genéricos, entradas extremas, posição das opções, codificação, versões antigas do Python. | **Corrigido:** 77 testes novos e integração contínua (Python 3.10–3.14, NumPy 1.24). Não foi adicionado teste que compare as tabelas Markdown com o registro (considerado frágil). |
+| 43 | Baixa | ORBI-6, NUME-12, CLI-12, ARCH-13 | Lacunas: estados orbitais genéricos, entradas extremas, posição das opções, codificação, versões antigas do Python. | **Corrigido:** 96 testes novos e integração contínua (Python 3.10–3.14, NumPy 1.24). Não foi adicionado teste que compare as tabelas Markdown com o registro (considerado frágil). |
 
-## 6. Aproximações do modelo (todas documentadas e exibidas pela CLI)
+## 6. Aproximações do modelo (todas documentadas; as que se aplicam à CLI são exibidas por ela)
 
 - Problema de dois corpos com o corpo central em repouso e veículo de massa desprezível.
 - Sem perturbações: arrasto, achatamento (J2), pressão de radiação, terceiros corpos.
@@ -164,8 +165,8 @@ ARCH = arquitetura/documentação).
 - g = μ/r² sem o efeito centrífugo da rotação.
 - Mecânica clássica (sem correções relativísticas).
 - Incertezas de G e μ não propagadas; μ da Lua arredondado a 5 algarismos.
-- Fontes gravitacionais fixas em `NewtonianGravity`.
-- Classificação de trajetórias com tolerância (padrão 10⁻¹⁰).
+- Fontes gravitacionais fixas em `NewtonianGravity` (somente API).
+- Classificação de trajetórias com tolerância, padrão 10⁻¹⁰ (somente API).
 
 ## 7. Funcionalidades que ainda são protótipos ou não existem
 
@@ -185,24 +186,45 @@ ARCH = arquitetura/documentação).
 - Mensagens do `argparse` sem padrão na tabela de tradução continuam em inglês.
 - Não houve execução em aparelho Android.
 
-## 9. Como reproduzir
+## 9. Revisão adversarial das correções
+
+Antes da entrega, as próprias correções (diferença `06219b9..69f83dc`) passaram por uma
+segunda revisão independente, também com verificação adversarial (3 revisores e 3
+verificadores). Ela encontrou **16 problemas nas correções**, todos confirmados ao menos em
+parte e todos tratados, com testes de regressão:
+
+| Gravidade | Problema introduzido ou deixado pelas correções | Tratamento |
+|---|---|---|
+| Alta | Inteiros do NumPy em `solve_quadratic`: `Fraction(np.int64)` mantinha aritmética de 64 bits (AttributeError ou raízes erradas por estouro silencioso). | Numerador e denominador convertidos para `int` do Python. |
+| Baixa | A tolerância do ponto de retorno crescia com \|x0\| (dependia da origem do eixo): falsos "atingido" e falsos "nunca atingido". | Faixa reduzida ao erro de representação das entradas e aplicada só se o retorno não está no passado e x ≠ x0. |
+| Baixa | Decimais exatos sem limite: `quadratica 1e-100000000 1 1` levava minutos; coeficientes abaixo do `float64` eram resolvidos mas exibidos como 0. | Valores não normais usam o `float` exibido; não nulos abaixo do menor `float64` são rejeitados. |
+| Baixa | Raízes −0.0 voltaram a aparecer. | Normalização restaurada. |
+| Baixa | Erro quando só a raiz negativa (descartada) excedia o `float64`. | Raízes negativas descartadas antes da verificação. |
+| Baixa | `G·m1·m2` ainda sofria underflow (0 N silencioso). | Operações intercaladas e erro em underflow. |
+| Baixa | `to_si`/`from_si` deixaram de aceitar arrays NumPy. | Arrays aceitos e validados. |
+| Baixa | Abreviações de opções (`--alt`, `--js`) desativadas sem aviso. | Reativadas. |
+| Baixa | Sobras da linha de comando: `--` ou uma opção inválida faziam todos os NOME=VALOR serem rejeitados no Python 3.10–3.12. | Só as sobras com "-" são rejeitadas; `--` é ignorado. |
+| Baixa | O espaço de proteção de negativos ainda aparecia em uma mensagem de `calcular`. | Corrigido. |
+| Baixa | Documentação: limites de ulp inconsistentes; exemplo do README com fórmula inexistente; motivo errado para evitar o Termux da Google Play; "massas comparáveis" para Terra–Sol; título da seção 6 deste relatório. | Textos corrigidos. |
+
+## 10. Como reproduzir
 
 ```bash
 pip install -e ".[dev]"
 python -m pytest -q          # suíte completa
 ```
 
-Resultado da suíte final (220 testes) por interpretador, em Linux x86-64:
+Resultado da suíte final (239 testes) por interpretador, em Linux x86-64:
 
 | Interpretador | NumPy | Resultado |
 |---|---|---|
-| Python 3.10.20 | 2.2.6 | 220 passaram, 0 falharam |
-| Python 3.10.20 | 1.24.4 | 220 passaram, 0 falharam |
-| Python 3.11.17 | 2.4.6 | 220 passaram, 0 falharam |
-| Python 3.11.17 | 1.24.4 | 220 passaram, 0 falharam |
-| Python 3.12.3 | 2.5.4 | 220 passaram, 0 falharam |
-| Python 3.13.16 | 2.5.3 | 220 passaram, 0 falharam |
-| Python 3.14.6 | 2.5.4 | 220 passaram, 0 falharam |
+| Python 3.10.20 | 2.2.6 | 239 passaram, 0 falharam |
+| Python 3.10.20 | 1.24.4 | 239 passaram, 0 falharam |
+| Python 3.11.17 | 2.4.6 | 239 passaram, 0 falharam |
+| Python 3.11.17 | 1.24.4 | 239 passaram, 0 falharam |
+| Python 3.12.3 | 2.5.4 | 239 passaram, 0 falharam |
+| Python 3.13.16 | 2.5.3 | 239 passaram, 0 falharam |
+| Python 3.14.6 | 2.5.4 | 239 passaram, 0 falharam |
 
 A integração contínua (`.github/workflows/testes.yml`) repete a suíte a cada envio, com
 Python 3.10 a 3.14 e com NumPy 1.24.

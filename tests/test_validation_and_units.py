@@ -174,3 +174,10 @@ def test_conversoes_detectam_overflow():
 
 def test_menos_zero_e_normalizado():
     assert math.copysign(1.0, as_non_negative("x", -0.0)) == 1.0
+
+
+def test_conversoes_aceitam_arrays_do_numpy():
+    assert units.to_si(np.array([1.0, 2.0]), "km").tolist() == [1000.0, 2000.0]
+    assert float(units.from_si(np.array(5000.0), "km")) == 5.0
+    with pytest.raises(InvalidParameterError):
+        units.to_si(np.array([1.0, math.nan]), "km")

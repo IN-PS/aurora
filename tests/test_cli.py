@@ -270,3 +270,49 @@ def test_json_preserva_caracteres_com_saida_nao_utf8():
     assert proc.returncode == 0
     data = json.loads(proc.stdout.decode("ascii"))
     assert "☉" in data["corpo"]["fontes"][0] and "Resolução" in data["corpo"]["fontes"][0]
+
+
+# --- regressões da revisão das correções ----------------------------------------------------
+
+
+@pytest.mark.parametrize("argv", [["1", "1", "0e-100000000"], ["1e-100000000", "1", "1"]])
+def test_expoentes_enormes_nao_travam_a_interface(argv):
+    import time
+
+    start = time.perf_counter()
+    try:
+        main(["quadratica", *argv])
+    except SystemExit:
+        pass
+    assert time.perf_counter() - start < 5.0
+
+
+@pytest.mark.parametrize("argv", [["1e-400", "0", "-1e-400"], ["1", "0", "-1e-400"]])
+def test_coeficiente_abaixo_do_float64_e_rejeitado(capsys, argv):
+    # Antes, a equação exibida (com zeros) contradizia a resolvida.
+    with pytest.raises(SystemExit) as exc:
+        main(["quadratica", *argv])
+    assert exc.value.code == 2
+    assert "menor número representável" in capsys.readouterr().err
+
+
+def test_abreviacoes_de_opcoes_continuam_aceitas(capsys):
+    code, out, _ = run(capsys, "orbita-circular", "--alt", "400 km", "--js")
+    assert code == 0 and json.loads(out)["altitude"]["valor"] == 400e3
+    with pytest.raises(SystemExit) as exc:
+        main(["--vers"])  # ambígua entre --versao e --version
+    assert exc.value.code == 2 and "opção ambígua" in capsys.readouterr().err
+
+
+def test_valor_negativo_solto_e_ecoado_sem_espaco(capsys):
+    code, _, err = run(capsys, "calcular", "velocidade_orbital_circular", "-5")
+    assert code == 1 and "Entrada inválida '-5'" in err
+
+
+def test_sobras_da_linha_de_comando_em_calcular(capsys):
+    code, out, _ = run(capsys, "calcular", "velocidade_escape", "--json", "mu=1", "--", "r=1")
+    assert code == 0 and json.loads(out)["valor"] == pytest.approx(2**0.5)
+    with pytest.raises(SystemExit):
+        main(["calcular", "velocidade_escape", "--json", "mu=1", "r=1", "-x"])
+    err = capsys.readouterr().err
+    assert "argumentos não reconhecidos: -x" in err and "mu=1" not in err

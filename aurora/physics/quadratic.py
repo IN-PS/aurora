@@ -75,13 +75,20 @@ class QuadraticSolution:
 
 
 def _exact(value: object, as_float: float) -> Fraction:
-    """Valor exato do coeficiente: inteiros e frações são mantidos; ``float`` é exato como binário."""
-    return Fraction(value) if isinstance(value, numbers.Rational) else Fraction(as_float)
+    """Valor exato do coeficiente: inteiros e frações são mantidos; ``float`` é exato como binário.
+
+    Numerador e denominador são convertidos para ``int`` do Python: inteiros do NumPy têm
+    largura fixa e dariam resultados errados (estouro silencioso) na aritmética exata.
+    """
+    if isinstance(value, numbers.Rational):
+        return Fraction(int(value.numerator), int(value.denominator))
+    return Fraction(as_float)
 
 
 def _fraction_to_float(value: Fraction) -> float:
+    """Arredonda uma vez para ``float`` (±inf se exceder o intervalo; −0.0 normalizado para 0.0)."""
     try:
-        return float(value)
+        return float(value) + 0.0
     except OverflowError:
         return math.inf if value > 0 else -math.inf
 
@@ -97,15 +104,20 @@ def _sqrt_fraction(value: Fraction) -> Fraction:
     return Fraction(math.sqrt(float(scaled))) * Fraction(2) ** e
 
 
+def _distinct_real_roots(fa: Fraction, fb: Fraction, fc: Fraction, delta: Fraction) -> tuple[Fraction, Fraction]:
+    """Raízes reais (Δ > 0) como frações, em ordem crescente, pela forma estável (√Δ com ~1 ulp)."""
+    s = _sqrt_fraction(delta)
+    q = -(fb + s) / 2 if fb >= 0 else -(fb - s) / 2  # |q| ≥ √Δ/2 > 0: sem cancelamento
+    r1, r2 = sorted((q / fa, fc / q))
+    return r1, r2
+
+
 def _solve_rational(fa: Fraction, fb: Fraction, fc: Fraction) -> tuple[Fraction, RootKind, tuple]:
     """Núcleo do solver para coeficientes racionais exatos (``fa ≠ 0``): retorna (Δ exato, tipo, raízes)."""
     delta = fb * fb - 4 * fa * fc
     if delta > 0:
         kind = RootKind.TWO_REAL
-        s = _sqrt_fraction(delta)
-        q = -(fb + s) / 2 if fb >= 0 else -(fb - s) / 2  # |q| ≥ √Δ/2 > 0: sem cancelamento
-        x1, x2 = sorted((_fraction_to_float(q / fa), _fraction_to_float(fc / q)))
-        roots: tuple = (x1, x2)
+        roots: tuple = tuple(_fraction_to_float(r) for r in _distinct_real_roots(fa, fb, fc, delta))
         parts: tuple[float, ...] = roots
     elif delta == 0:
         kind = RootKind.DOUBLE

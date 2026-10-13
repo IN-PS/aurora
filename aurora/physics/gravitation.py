@@ -34,6 +34,10 @@ from ..data.constants import G
 from ..errors import DomainError, InvalidParameterError
 from . import hypotheses as H
 
+_UNDERFLOW_MESSAGE = (
+    "O resultado é menor, em módulo, que o menor valor representável em ponto flutuante de 64 bits."
+)
+
 
 @register_formula(
     key="forca_gravitacional",
@@ -50,7 +54,10 @@ from . import hypotheses as H
 def gravitational_force(m1: float, m2: float, r: float) -> float:
     """Módulo da força de atração gravitacional, em N."""
     m1, m2, r = as_non_negative("m1", m1), as_non_negative("m2", m2), as_positive("r", r)
-    return G * m1 * m2 / r / r  # divisões sucessivas: r*r não sofre underflow para r pequeno
+    force = G * (m1 / r) * (m2 / r)  # intercalado: nem r² nem G·m1·m2 sofrem under/overflow à toa
+    if force == 0.0 and m1 > 0.0 and m2 > 0.0:
+        raise DomainError(_UNDERFLOW_MESSAGE)
+    return force
 
 
 @register_formula(
@@ -80,7 +87,10 @@ def gravitational_parameter(M: float) -> float:  # noqa: N803 (símbolo da fórm
 def gravitational_acceleration(mu: float, r: float) -> float:
     """Módulo da aceleração gravitacional ``μ/r²`` em m/s²."""
     mu, r = as_non_negative("mu", mu), as_positive("r", r)
-    return mu / r / r
+    g = mu / r / r
+    if g == 0.0 and mu > 0.0:
+        raise DomainError(_UNDERFLOW_MESSAGE)
+    return g
 
 
 def point_mass_acceleration(mu: float, position: object, source_position: object = (0.0, 0.0, 0.0)) -> np.ndarray:

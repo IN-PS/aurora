@@ -203,3 +203,22 @@ def test_precisao_de_poucos_ulp_em_varias_escalas():
             got = [sol.roots[0].real, sol.roots[0].imag] if sol.kind is RootKind.COMPLEX else list(sol.roots)
             for x, ref in zip(got, _reference_roots(a, b, c), strict=True):
                 assert abs(x - float(ref)) <= 4 * math.ulp(float(ref)), (a, b, c)
+
+
+# --- regressões da revisão das correções ----------------------------------------------------
+
+
+def test_inteiros_do_numpy_sao_tratados_com_precisao_arbitraria():
+    # Fraction(np.int64) mantinha o inteiro de 64 bits: AttributeError ou estouro silencioso.
+    np = pytest.importorskip("numpy")
+    assert solve_quadratic(np.int64(1), np.int64(-5), np.int64(6)).roots == (2.0, 3.0)
+    assert solve_quadratic(np.int64(2**31), np.int64(0), np.int64(-(2**31))).roots == (-1.0, 1.0)
+    assert solve_quadratic(np.uint64(1), np.uint64(5), np.uint64(6)).roots == (-3.0, -2.0)
+    assert discriminant(np.int64(1), np.int64(4_000_000_000), np.int64(1)) == 1.6e19
+
+
+def test_raizes_nao_retornam_menos_zero():
+    small = solve_quadratic(1.0, 1e10, 5e-324).roots[1]
+    assert small == 0.0 and math.copysign(1.0, small) == 1.0
+    z = solve_quadratic(1e10, 5e-324, 1e10).roots[0]
+    assert math.copysign(1.0, z.real) == 1.0
