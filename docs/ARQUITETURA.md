@@ -24,11 +24,15 @@ etapas.
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ aurora.interface   linha de comando (etapa 1); painel web     │
-│                    (etapas 2–4, a definir — ver seção 5)       │
+│ aurora.interface   linha de comando (cli, cli_simulation) e   │
+│                    gráficos (plots: Matplotlib e Plotly)       │
+├──────────────────────────────────────────────────────────────┤
+│ aurora.simulation  propagator, validation, initial_conditions, │
+│                    vehicle, telemetry, missions (etapa 2)      │
 ├──────────────────────────────────────────────────────────────┤
 │ aurora.physics     modelos: quadratic, kinematics,            │
-│                    gravitation, orbits (+ hypotheses)          │
+│                    gravitation, orbits, kepler, maneuvers      │
+│                    (+ hypotheses)                              │
 ├──────────────────────────────────────────────────────────────┤
 │ aurora.core        validation, units, formula (registro),     │
 │                    provenance (DataOrigin)                     │
@@ -40,8 +44,14 @@ etapas.
 ```
 
 Regra de dependência: cada camada importa apenas as camadas **abaixo** dela. `physics` não
-conhece a interface; `data` não conhece os modelos. Isso permite trocar ou acrescentar
-interfaces (CLI, painel web, notebooks) sem tocar nos modelos.
+conhece a interface; `data` não conhece os modelos; `simulation` não imprime nem desenha
+nada (a interface é quem exibe resultados e grava gráficos). Isso permite trocar ou
+acrescentar interfaces (CLI, painel web, notebooks) sem tocar nos modelos.
+
+Dependências externas por camada: `physics` e `core` usam apenas NumPy e a biblioteca
+padrão; `simulation` acrescenta o SciPy (importado só quando uma integração é executada);
+`interface/plots.py` importa Matplotlib e Plotly somente ao gravar um gráfico, e a falta
+deles gera `DependencyError` com instruções de instalação, sem afetar o resto.
 
 ## 3. Componentes da etapa 1
 
@@ -60,30 +70,58 @@ interfaces (CLI, painel web, notebooks) sem tocar nos modelos.
 | `physics/orbits.py` | Fórmulas de órbitas circulares/elípticas; `orbit_from_state` (cônica a partir de r⃗, v⃗); resumo de órbita circular. |
 | `interface/cli.py` | Comandos `quadratica`, `formulas`, `calcular`, `orbita-circular`, `corpos`, `constantes`; saída em texto ou JSON. |
 
+## 3a. Componentes da etapa 2
+
+| Módulo | Responsabilidade |
+|---|---|
+| `errors.py` | Acrescenta `SimulationError` (falha da integração) e `DependencyError` (biblioteca opcional ausente). |
+| `physics/gravitation.py` | `TwoBodyGravity`: aceleração do modelo de dois corpos, otimizada para o integrador (chamada milhares de vezes por órbita). |
+| `physics/kepler.py` | Propagação analítica por variável universal (funções de Stumpff, Newton protegido); elementos orbitais → vetor de estado. |
+| `physics/maneuvers.py` | Tsiolkovsky, propelente para um Δv e transferência de Hohmann (4 fórmulas registradas). |
+| `simulation/propagator.py` | `propagate` (SciPy `solve_ivp`, DOP853/RK45), `IntegratorSettings` (tolerâncias em SI, limite de avaliações), `Trajectory` (amostras somente leitura, modelo, hipóteses, origem `SIMULATED`), evento de colisão, `concatenate`. |
+| `simulation/validation.py` | Erro contra Kepler amostra a amostra, conservação de energia e momento angular, seis cenários padrão. |
+| `simulation/initial_conditions.py` | Estado no fim da queima do lançador; órbitas circular e elíptica. |
+| `simulation/vehicle.py` | `Spacecraft` (massa seca, propelente, Isp; imutável) e `propellant_required`. |
+| `simulation/missions.py` | `simulate_hohmann`: duas queimas impulsivas, arco integrado, erro numérico da chegada, consumo. |
+| `simulation/telemetry.py` | Tabela derivada da trajetória e exportação CSV/JSON com metadados de reprodutibilidade e origem. |
+| `interface/plots.py` | Figura estática (6 painéis) e página HTML interativa autocontida (Plotly embutido, modo escuro, tela de celular). |
+| `interface/cli_simulation.py` | Comandos `propagar`, `hohmann` e `validar`. |
+| `interface/_common.py` | Formatação e saída JSON compartilhadas pelos comandos. |
+
+Fluxo de uma simulação na CLI: a interface converte as entradas para o SI → monta o estado
+inicial (`initial_conditions`) → `propagate` com o modelo `TwoBodyGravity` → `validation`
+mede o erro contra Kepler → a interface exibe o resumo, o erro medido, as hipóteses e o
+aviso de procedência, e grava telemetria e gráficos se pedido.
+
 ### Pontos de extensão já previstos
 
 - **Novas fórmulas** (ex.: equação do radar na etapa 3) entram com `@register_formula` e
   aparecem automaticamente na interface, com unidades e hipóteses.
 - **Modelos gravitacionais** implementam `acceleration(position, velocity, time)`
-  (`GravityModel`). O integrador da etapa 2 dependerá apenas desse protocolo, de modo que
+  (`GravityModel`). O integrador da etapa 2 depende apenas desse protocolo, de modo que
   modelos mais completos — fontes móveis lidas de efemérides, harmônicos zonais (J2),
-  correções relativísticas pós-newtonianas (que dependem da velocidade) — possam ser
-  acrescentados sem alterá-lo.
-- **Procedência** (`DataOrigin`) será usada pela telemetria simulada (etapa 2), pelos alvos
-  e ecos do radar virtual (etapa 3) e pelo contrato de dados com o hardware (etapa 5).
+  arrasto, correções relativísticas pós-newtonianas (que dependem da velocidade) — podem ser
+  acrescentados sem alterá-lo. Um modelo pode declarar `hypotheses` e `describe()`, que são
+  copiados para a trajetória e para a telemetria.
+- **Procedência** (`DataOrigin`): a telemetria simulada da etapa 2 já é marcada como
+  `SIMULATED`; o mesmo valerá para alvos e ecos do radar virtual (etapa 3) e para o contrato
+  de dados com o hardware (etapa 5).
 - **Efemérides** (etapa 4) substituirão posições fixas por fontes dependentes do tempo, por
   meio de uma camada de importação em `aurora.data`.
 
-### O que funciona e o que ainda é protótipo (etapa 1)
+### O que funciona e o que ainda é protótipo (etapas 1 e 2)
 
 | Componente | Situação |
 |---|---|
-| Calculadora do 2º grau, 18 fórmulas registradas, unidades, validação, CLI | **Funcional e testado** |
-| `orbit_from_state`, `constant_acceleration_state`, `time_to_reach_position`, `NewtonianGravity` | **Funcional e testado**, mas só como API Python (sem comando na CLI) |
-| `GravityModel` | **Gancho de arquitetura**: protocolo sem consumidor até existir o integrador da etapa 2. Por ser `runtime_checkable`, `isinstance` só verifica a existência do método `acceleration`, não sua assinatura |
+| Calculadora do 2º grau, 22 fórmulas registradas, unidades, validação, CLI | **Funcional e testado** |
+| Kepler universal, propagador numérico, validação, Hohmann, veículo, telemetria, comandos `propagar`/`hohmann`/`validar` | **Funcional e testado** (erros medidos em [VALIDACAO_ETAPA2.md](VALIDACAO_ETAPA2.md)) |
+| Gráficos estáticos e HTML interativo | **Funcional e testado** em Linux (arquivos gerados, página aberta no Chromium em tamanho de celular e de computador); não verificado em aparelho Android |
+| `orbit_from_state`, `constant_acceleration_state`, `time_to_reach_position`, `burnout_state` | **Funcional e testado**, mas só como API Python (sem comando na CLI) |
+| `GravityModel` | Protocolo usado pelo propagador. Por ser `runtime_checkable`, `isinstance` só verifica a existência do método `acceleration`, não sua assinatura |
 | `NewtonianGravity` | Fontes **estáticas**; `velocity` é validada mas não usada e `time` é ignorado (reservados a modelos futuros) |
-| `DataOrigin.SIMULATED` / `MEASURED` | **Reservados**: nada no pacote produz esses valores ainda. A regra "o simulador nunca cria `MEASURED`" é convenção documentada, não imposta por código |
-| Painel gráfico (dashboard), radar virtual, propagação numérica, efemérides | **Não implementados** (etapas 2–4) |
+| Único modelo de força | Dois corpos. O integrador numérico, para esse modelo, **reproduz** a solução analítica (que é exata); ele só passa a ser indispensável com perturbações (J2, arrasto, terceiros corpos), ainda não implementadas |
+| `DataOrigin.MEASURED` | **Reservado**: nada no pacote produz esse valor. A regra "o simulador nunca cria `MEASURED`" é convenção documentada, não imposta por código |
+| Painel gráfico (dashboard), radar virtual, efemérides | **Não implementados** (etapas 3–4) |
 | Software de hardware | **Fora deste pacote** por decisão de arquitetura (seção 4) |
 
 O registro de fórmulas é preenchido como efeito da importação de `aurora.physics`; quem usa
@@ -113,11 +151,14 @@ O pacote `aurora` é **exclusivamente um simulador**. Requisitos de arquitetura:
 |---|---|---|
 | Linguagem | Python ≥ 3.10 | Preferência do projeto; ecossistema científico maduro. |
 | Cálculo numérico | `float64` (IEEE 754) via `math` e NumPy | Precisão de ~15–16 algarismos significativos, suficiente para os modelos idealizados; NumPy para vetores 3D. Aritmética racional (`fractions`) apenas onde necessária (discriminante). |
-| SciPy | **Ainda não incluído** | Não é necessário na etapa 1. Será introduzido na etapa 2 para integração numérica com controle de passo (`scipy.integrate.solve_ivp`, métodos RK45/DOP853), com comparação contra soluções analíticas. |
+| Integração numérica | SciPy `solve_ivp`, DOP853 (padrão) ou RK45 | Métodos de passo adaptativo maduros e documentados, com saída densa e detecção de eventos. O DOP853 (ordem 8) precisou de menos avaliações e errou de 5 a 123 vezes menos que o RK45 nos cenários de validação. Integradores simpléticos (que conservam melhor a energia em propagações muito longas) ficam para quando houver modelos que os exijam. |
+| Referência analítica | Kepler por variável universal, implementada no projeto | Uma só formulação para elipse, parábola e hipérbole; implementação curta e verificável contra equações independentes nos testes. |
 | Unidades | Tabela própria (`core/units.py`) | Cobre as grandezas usadas, sem dependência extra, e é totalmente testada. Os modelos recebem apenas `float` em SI, então uma biblioteca como `pint` pode substituí-la no futuro sem alterar a física. |
 | Interface (etapa 1) | Linha de comando com `argparse` (biblioteca padrão) | O repositório estava vazio, sem tecnologia de interface a seguir. A CLI não adiciona dependências, é testável e permite automatizar e registrar experimentos (saída JSON). |
-| Gráficos (etapa 2+) | Matplotlib (figuras estáticas de validação) e Plotly (visualização interativa 2D/3D) | Preferências do projeto. Serão introduzidos quando houver trajetórias propagadas a exibir. |
-| Painel (etapas 2–4) | **Proposta**: aplicação web local em Python com Plotly Dash | Mantém uma única linguagem, reaproveita as figuras Plotly e roda no navegador sem servidor externo. Alternativa: Streamlit (mais simples, menos controle de layout). A decisão será confirmada antes de adicionar a dependência. |
+| Gráficos estáticos | Matplotlib, API orientada a objetos (`matplotlib.figure.Figure`, sem `pyplot`) | Preferência do projeto; não exige interface gráfica nem backend interativo (funciona em servidor e no Termux) e não mantém estado global. |
+| Gráficos interativos | Plotly, página HTML **autocontida** (plotly.js embutido, ≈ 5 MB) | Preferência do projeto; funciona sem internet e sem servidor, inclusive no navegador do celular. Optou-se por não usar o CDN para não depender de rede nem de terceiros. |
+| Dependências opcionais | Matplotlib e Plotly no extra `graficos` | O núcleo (cálculo e simulação) instala com NumPy e SciPy apenas, o que facilita o uso em ambientes restritos. |
+| Painel (etapas 3–4) | **Proposta**: aplicação web local em Python com Plotly Dash | Mantém uma única linguagem, reaproveita as figuras Plotly e roda no navegador sem servidor externo. Alternativa: Streamlit (mais simples, menos controle de layout). A decisão será confirmada antes de adicionar a dependência. |
 | Testes | pytest | Preferência do projeto. |
 | Documentação | Markdown em pt-BR | Preferência do projeto. |
 
@@ -128,9 +169,11 @@ O pacote `aurora` é **exclusivamente um simulador**. Requisitos de arquitetura:
   chaves de fórmulas e toda a interface em português brasileiro. As mensagens de erro de uso
   geradas pelo `argparse` (em inglês na biblioteca padrão) são traduzidas por uma tabela de
   padrões; uma mensagem sem padrão correspondente é exibida como está.
-- Integração contínua (`.github/workflows/testes.yml`): a suíte roda em Python 3.10–3.14 e
-  com a versão mínima declarada do NumPy, porque o comportamento do `argparse` muda entre
-  versões do Python (um defeito real da CLI só aparecia no 3.10–3.12).
+- Integração contínua (`.github/workflows/testes.yml`): a suíte roda em Python 3.10–3.14,
+  com as versões mínimas declaradas (NumPy 1.24, SciPy 1.10, Matplotlib 3.6, Plotly 5.0) e
+  sem as bibliotecas de gráficos, porque o comportamento do `argparse` muda entre versões do
+  Python (um defeito real da CLI só aparecia no 3.10–3.12) e o núcleo não deve depender dos
+  gráficos.
 - Parâmetros das fórmulas usam os símbolos físicos (`mu`, `r`, `v0`, `T`…).
 - Grandezas ilimitadas (apoapse de hipérbole, período de trajetória aberta) são `math.inf`;
   grandezas indefinidas (inclinação de trajetória radial) são `math.nan`.
@@ -139,11 +182,16 @@ O pacote `aurora` é **exclusivamente um simulador**. Requisitos de arquitetura:
 
 As etapas seguintes só serão iniciadas após validação da anterior.
 
-- **Etapa 2 — Simulação orbital.** Integrador numérico com controle de passo e tolerâncias
-  configuráveis sobre `GravityModel`; validação contra órbitas analíticas (conservação de
-  energia e momento angular, período, retorno à posição inicial); gráficos de posição,
-  velocidade e altitude; telemetria simulada marcada como `SIMULATED`; transferência de
-  Hohmann como caso analítico de referência.
+- **Etapa 2 — Simulação orbital (concluída, 0.2.0).** Integrador numérico com controle de
+  passo e tolerâncias configuráveis sobre `GravityModel`; validação contra a solução
+  analítica de Kepler (erro amostra a amostra, conservação de energia e momento angular);
+  gráficos de posição, velocidade e altitude (estáticos e interativos); veículo virtual;
+  telemetria simulada marcada como `SIMULATED`; transferência de Hohmann analítica e
+  simulada.
+- **Próximo passo sugerido antes da etapa 3** (a confirmar): perturbações como modelos
+  `GravityModel` adicionais — harmônico zonal J2 da Terra (com a validação pela precessão
+  nodal analítica) e terceiros corpos com posições fixas ou tabeladas —, porque são elas que
+  tornam a integração numérica necessária.
 - **Etapa 3 — Radar virtual.** Antena, feixe, alcance e varredura; alvos estáticos e móveis;
   distância (tempo de ida e volta, c·Δt/2) e velocidade radial (efeito Doppler) com ruído,
   resolução e incerteza; visualização de incertezas. Documentação explícita de que o

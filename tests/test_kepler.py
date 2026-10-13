@@ -205,3 +205,62 @@ def test_elementos_orbitais_ida_e_volta():
 def test_elementos_orbitais_invalidos(a, e, nu, error):
     with pytest.raises(error):
         state_from_elements(MU, a, e, true_anomaly=nu)
+
+
+def _random_elliptic_errors(n, seed=1):
+    """Maior |Δr|/a em n órbitas elípticas aleatórias (orientação, e, a e Δt arbitrários)."""
+    rng = np.random.default_rng(seed)
+    worst = 0.0
+    for _ in range(n):
+        a = 10 ** rng.uniform(6.8, 8.5)
+        e = rng.uniform(0.0, 0.97)
+        inc, raan, argp = rng.uniform(0, math.pi), rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
+        nu0 = rng.uniform(-math.pi, math.pi)
+        r0, v0 = state_from_elements(MU, a, e, inc, raan, argp, nu0)
+        ecc0 = 2 * math.atan(math.sqrt((1 - e) / (1 + e)) * math.tan(nu0 / 2))
+        period = orbital_period(MU, a)
+        dt = rng.uniform(-3 * period, 3 * period)
+        mean = math.remainder(ecc0 - e * math.sin(ecc0) + 2 * math.pi / period * dt, 2 * math.pi)
+        ecc = mean if e < 0.8 else math.pi
+        for _ in range(100):
+            step = (ecc - e * math.sin(ecc) - mean) / (1 - e * math.cos(ecc))
+            ecc -= step
+            if abs(step) < 1e-15:
+                break
+        nu = 2 * math.atan2(math.sqrt(1 + e) * math.sin(ecc / 2), math.sqrt(1 - e) * math.cos(ecc / 2))
+        r_ref, _ = state_from_elements(MU, a, e, inc, raan, argp, nu)
+        r, _ = propagate_kepler(MU, r0, v0, dt)
+        worst = max(worst, float(np.linalg.norm(r - r_ref)) / a)
+    return worst
+
+
+def _random_hyperbolic_errors(n, seed=2):
+    """Maior |Δr|/|r| em n hipérboles aleatórias."""
+    rng = np.random.default_rng(seed)
+    worst = 0.0
+    for _ in range(n):
+        e = rng.uniform(1.05, 4.0)
+        a = -(10 ** rng.uniform(6.8, 8.0))
+        inc, raan, argp = rng.uniform(0, math.pi), rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi)
+        nu0 = rng.uniform(-1, 1) * 0.95 * math.acos(-1 / e)
+        r0, v0 = state_from_elements(MU, a, e, inc, raan, argp, nu0)
+        big_h0 = 2 * math.atanh(math.sqrt((e - 1) / (e + 1)) * math.tan(nu0 / 2))
+        dt = rng.uniform(-2e5, 2e5)
+        mean = e * math.sinh(big_h0) - big_h0 + math.sqrt(MU / (-a) ** 3) * dt
+        big_h = math.asinh(mean / e)
+        for _ in range(200):
+            step = (e * math.sinh(big_h) - big_h - mean) / (e * math.cosh(big_h) - 1)
+            big_h -= step
+            if abs(step) < 1e-15 * max(1.0, abs(big_h)):
+                break
+        nu = 2 * math.atan(math.sqrt((e + 1) / (e - 1)) * math.tanh(big_h / 2))
+        r_ref, _ = state_from_elements(MU, a, e, inc, raan, argp, nu)
+        r, _ = propagate_kepler(MU, r0, v0, dt)
+        worst = max(worst, float(np.linalg.norm(r - r_ref) / np.linalg.norm(r_ref)))
+    return worst
+
+
+def test_varredura_aleatoria_de_elipses_e_hiperboles():
+    # 1000 casos de cada tipo, com semente fixa (valores medidos em docs/VALIDACAO_ETAPA2.md).
+    assert _random_elliptic_errors(1000) < 1e-10
+    assert _random_hyperbolic_errors(1000) < 1e-11

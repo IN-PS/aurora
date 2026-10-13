@@ -1,11 +1,11 @@
-# Modelos físicos e matemáticos — etapa 1
+# Modelos físicos e matemáticos — etapas 1 e 2
 
 Este documento lista cada modelo implementado, com unidades, domínio de validade, hipóteses,
 cuidados numéricos e a forma como foi validado. As mesmas hipóteses são exibidas pela
-interface (`aurora formulas <chave>`).
+interface (`aurora formulas <chave>` e na saída de `propagar` e `hohmann`).
 
-> Todos os resultados são **cálculos analíticos com modelos idealizados**. Não são medições
-> e não devem ser usados como planos de voo.
+> Todos os resultados são **cálculos analíticos ou simulações numéricas de modelos
+> idealizados**. Não são medições e não devem ser usados como planos de voo.
 
 ## 1. Convenções
 
@@ -175,7 +175,165 @@ da ordem de 10⁻¹⁵ (alguns ulp)·(v²r/μ), por isso a classificação usa t
 usa a·(1+e), bem condicionada mesmo com e → 1 (p/(1−e) perderia precisão); as normas usam
 `math.hypot`, que não sofre overflow/underflow ao elevar ao quadrado.
 
-## 7. Validação
+## 7. Propagação analítica de dois corpos (`physics/kepler.py`)
+
+`propagate_kepler(mu, r⃗₀, v⃗₀, Δt)` devolve o estado após Δt (positivo ou negativo) pela
+formulação de **variável universal**, válida para elipses, parábolas, hipérboles e
+trajetórias radiais (Curtis, alg. 3.3 e 3.4; Vallado, alg. 8):
+
+```text
+α = 2/r₀ − v₀²/μ                          (inverso do semieixo maior; zero na parábola)
+F(χ) = (r₀·v_r0/√μ)·χ²·C(z) + (1 − α·r₀)·χ³·S(z) + r₀·χ − √μ·Δt = 0,   z = α·χ²
+f = 1 − χ²·C(z)/r₀        g = Δt − χ³·S(z)/√μ
+ḟ = √μ·(α·χ³·S(z) − χ)/(r·r₀)        ġ = 1 − χ²·C(z)/r
+r⃗ = f·r⃗₀ + g·v⃗₀          v⃗ = ḟ·r⃗₀ + ġ·v⃗₀
+```
+
+C(z) e S(z) são as funções de Stumpff. **Cuidados numéricos:**
+
+- Para |z| < 0,1, C e S são calculadas pela série de Taylor (12 termos); a forma fechada
+  `(1 − cos √z)/z` perderia algarismos por cancelamento perto de z = 0.
+- F′(χ) = r > 0, então F é crescente e a raiz é única. Ela é cercada por um intervalo
+  [lo, hi] com mudança de sinal (expandido por duplicação) e refinada por Newton protegido
+  (estratégia *rtsafe*, Press et al., §9.4): quando o passo de Newton sairia do intervalo ou
+  não o reduziria o bastante — o que acontece em hipérboles, onde F cresce exponencialmente
+  —, usa-se bisseção.
+- O critério de parada compara |F| com uma estimativa do erro de arredondamento ao avaliá-la
+  (8ε·Σ\|termos\|), em vez de uma tolerância fixa que poderia ser inatingível.
+- Em órbitas elípticas, Δt é reduzido pelo número inteiro de períodos (`fmod`), o que mantém
+  χ limitado mesmo em propagações de milhares de períodos.
+- Estados que não cabem em `float64` (hipérboles propagadas por tempos enormes) geram
+  `DomainError`, nunca `inf` ou `NaN`.
+
+`state_from_elements(mu, a, e, i, Ω, ω, ν)` converte elementos clássicos em vetor de estado
+(referencial perifocal e rotação 3-1-3). Exige a > 0 com 0 ≤ e < 1 ou a < 0 com e > 1; a
+parábola (e = 1) não é definida pelo semieixo maior e é recusada, assim como uma anomalia
+verdadeira fora do ramo da hipérbole (1 + e·cos ν ≤ 0).
+
+**Validação** (detalhes e números em [VALIDACAO_ETAPA2.md](VALIDACAO_ETAPA2.md), seção 1):
+contra a equação de Kepler clássica em 1 000 elipses aleatórias (maior erro medido:
+3,5 × 10⁻¹³·a), contra a equação hiperbólica em 1 000 hipérboles (1,8 × 10⁻¹³ relativo),
+contra a equação de Barker na parábola, ida e volta, 10 000 períodos e conservação da energia
+e do momento angular.
+
+## 8. Manobras impulsivas (`physics/maneuvers.py`)
+
+| Chave | Expressão | Unidade | Domínio |
+|---|---|---|---|
+| `delta_v_tsiolkovsky` | Δv = Isp·g0·ln(m0/mf) | m/s | Isp, m0, mf > 0; mf ≤ m0 |
+| `massa_propelente` | m_p = m0·(1 − exp(−Δv/(Isp·g0))) | kg | Isp, m0 > 0; Δv ≥ 0 |
+| `delta_v_hohmann` | Δv = \|Δv1\| + \|Δv2\| | m/s | μ, r1, r2 > 0 |
+| `tempo_hohmann` | t = π·√(((r1 + r2)/2)³/μ) | s | μ, r1, r2 > 0 |
+
+Transferência de Hohmann entre órbitas circulares coplanares de raios r1 e r2 (a partir do
+centro): elipse de transferência com a_t = (r1 + r2)/2;
+Δv1 = √(μ(2/r1 − 1/a_t)) − √(μ/r1) e Δv2 = √(μ/r2) − √(μ(2/r2 − 1/a_t)) (vis-viva).
+Valores negativos indicam queimas **retrógradas** (descida para uma órbita menor); o custo
+total usa os módulos. `hohmann_transfer` devolve também as velocidades antes e depois de cada
+queima.
+
+**Cuidados numéricos:** `massa_propelente` usa `expm1`, preciso também para Δv muito pequeno
+(1 − exp(−x) perderia todos os algarismos para x ≈ 10⁻¹²); o período usa `a·√(a/μ)`.
+
+**Hipóteses:** queimas **impulsivas** (variação instantânea de velocidade, sem perdas
+gravitacionais nem de arrasto); impulso específico constante; g0 = 9,80665 m/s² é o valor
+convencional usado na definição de Isp, não a gravidade local; sem forças externas durante a
+queima; problema de dois corpos. Não são planos de voo: uma queima real de quilômetros por
+segundo dura minutos e tem perdas que o modelo ignora.
+
+## 9. Propagação numérica (`simulation/propagator.py`)
+
+Equações de movimento de uma partícula de teste em referencial inercial:
+
+```text
+dr⃗/dt = v⃗          dv⃗/dt = a⃗(r⃗, v⃗, t)
+```
+
+A aceleração vem de um modelo que segue o protocolo `GravityModel`. Na etapa 2 o modelo é
+`TwoBodyGravity`: a⃗ = −μ·r⃗/r³, com o corpo central fixo na origem (calculado como
+`(μ/r/r)/r` para evitar overflow de r³). `NewtonianGravity` (fontes fixas) também pode ser
+integrado.
+
+**Integrador.** `scipy.integrate.solve_ivp` com o método de Dormand–Prince de ordem 8
+(`DOP853`, padrão; Hairer, Nørsett e Wanner) ou de ordem 5 (`RK45`; Dormand e Prince, 1980).
+O passo é escolhido automaticamente para que o erro **local** estimado de cada componente do
+estado fique abaixo de `atol_i + rtol·|y_i|`. Padrões:
+
+| Parâmetro | Padrão | Justificativa |
+|---|---|---|
+| `rtol` | 10⁻¹⁰ | Seis ordens acima do épsilon de máquina: deixa margem para o arredondamento acumulado. Aceito entre 10⁻¹³ e 10⁻³. |
+| `atol` de posição | 10⁻⁴ m | Abaixo de `rtol·r` em qualquer órbita da Terra ou da Lua (≈ 7 × 10⁻⁴ m em LEO): a tolerância relativa domina e `atol` só atua quando uma componente passa por zero. |
+| `atol` de velocidade | 10⁻⁷ m/s | Idem (`rtol·v` ≈ 7,7 × 10⁻⁷ m/s em LEO). |
+| passo máximo | sem limite | O controle de erro já reduz o passo perto do periapse. |
+| limite de avaliações | 2 000 000 por trecho | Cerca de 30 s num computador de mesa; uma simulação mais longa termina com erro claro (`SimulationError`) em vez de travar. Ajustável (`--max-avaliacoes`). |
+
+As amostras de saída (`--pontos`, igualmente espaçadas no tempo) vêm da interpolação de alta
+ordem do próprio método (saída densa), sem forçar passos pequenos.
+
+**Tipos de erro numérico:**
+
+1. **Erro de truncamento local** — controlado pelas tolerâncias a cada passo.
+2. **Erro global** — o acumulado dos erros locais ao longo da simulação. **Não** é limitado
+   pela tolerância: em órbitas fechadas, um pequeno erro de energia vira um pequeno erro de
+   período, e o atraso de fase se acumula a cada volta. Medimos crescimento aproximadamente
+   quadrático com o número de órbitas, quase todo ao longo da trajetória (LEO, tolerâncias
+   padrão: 7,6 mm em 10 órbitas, 1,5 m em 100, 169 m em 1 000).
+3. **Arredondamento** — `float64` tem ε ≈ 2,2 × 10⁻¹⁶; com tolerâncias muito pequenas, o
+   arredondamento acumulado passa a dominar e reduzir `rtol` deixa de ajudar (medido: de
+   10⁻¹⁰ para 10⁻¹² o erro cai apenas 2,5 a 31 vezes). Por isso `rtol < 10⁻¹³` é recusado.
+4. **Dependência da orientação** — o controle é feito por componente cartesiana, então a
+   mesma órbita, girada, tem erro um pouco diferente (medido: fator de até ≈ 6).
+
+**Como o erro é medido.** Para o modelo de dois corpos, `aurora.simulation.validation`
+compara cada amostra com a solução analítica (seção 7) a partir do mesmo estado inicial e
+calcula as variações relativas da energia e do momento angular. A CLI **sempre** exibe esse
+erro medido junto com a simulação; `aurora validar` executa seis cenários de referência. Os
+números estão em [VALIDACAO_ETAPA2.md](VALIDACAO_ETAPA2.md).
+
+**Colisão.** Com `collision_radius` (a CLI usa o raio de referência do corpo), um evento
+terminal interrompe a integração quando r cai a esse valor; o instante é localizado por busca
+de raiz na saída densa (testado: |r| − R ≤ 1 mm) e acrescentado como última amostra. Sem
+raio de colisão, uma queda até r = 0 termina com `SimulationError` (singularidade do modelo).
+
+**Hipótese numérica**, exibida com cada simulação: "Integração numérica com passo
+adaptativo: o erro local é limitado pelas tolerâncias do integrador; o erro global acumula
+com o tempo de simulação."
+
+## 10. Condições iniciais, veículo, missões e telemetria (`simulation/`)
+
+**Referencial.** Inercial, com origem no centro do corpo central e o plano xy no equador do
+corpo. Não há data/época associada: os resultados não estão ligados a nenhum instante real, e
+o eixo x não aponta para nenhuma direção astronômica específica.
+
+**Condições iniciais idealizadas** (`initial_conditions.py`). O "lançamento" é representado
+apenas pelo estado no fim da queima do lançador (*burnout*): altitude, velocidade inercial,
+ângulo de trajetória γ (0 = horizontal; positivo para cima), inclinação, longitude do nodo
+ascendente e argumento de latitude. Não são modelados subida atmosférica, empuxo, arrasto,
+rotação do corpo (a velocidade do local de lançamento não é somada) nem o local de
+lançamento. Atalhos: `circular_orbit_state` (velocidade circular, γ = 0) e
+`elliptic_orbit_state` (altitudes de periapse e apoapse; parte do periapse).
+
+**Veículo virtual** (`vehicle.py`). Massa seca, massa de propelente e impulso específico;
+imutável. Cada queima consome m_p = m·(1 − exp(−|Δv|/(Isp·g0))) (Tsiolkovsky), e uma queima
+sem propelente suficiente gera erro. `propellant_required(m_seca, Isp, Δv)` dá o propelente
+para somar Δv; para várias queimas, Δv é a soma dos módulos, porque as razões de massa se
+multiplicam.
+
+**Missão de Hohmann** (`missions.py`). Parte de (r1, 0, 0) em órbita circular equatorial,
+aplica a 1ª queima na direção da velocidade, integra numericamente meia elipse de
+transferência, aplica a 2ª queima no raio alcançado e segue na órbita final (uma volta, por
+padrão). A diferença entre o raio alcançado e r2, e entre o semieixo da órbita final e r2,
+mede o erro numérico. Sem veículo informado, usa 1 000 kg secos, Isp = 300 s e exatamente o
+propelente necessário.
+
+**Telemetria simulada** (`telemetry.py`). Tabela com t, posição, velocidade, raio, altitude,
+módulo da velocidade, energia específica e momento angular, em SI, exportada em CSV
+(metadados em linhas `# chave: valor` e números com todos os algarismos de `float64`) ou JSON.
+Todo arquivo registra `origem: simulacao`, o aviso de que não é medição, o corpo e suas
+fontes, o modelo, o integrador com tolerâncias, o número de avaliações e as hipóteses — o
+suficiente para reproduzir o experimento.
+
+## 11. Validação
 
 Os testes em `tests/` verificam quatro tipos de propriedade:
 
@@ -193,24 +351,37 @@ Os testes em `tests/` verificam quatro tipos de propriedade:
    (concordância de 1,5 × 10⁻⁶ com o ano sideral de 365,256363 d, explicada quase toda por
    se desprezar a massa Terra–Lua); exemplo de Kahan para o discriminante.
 4. **Precisão numérica** — raízes do 2º grau com erro ≤ 4 ulp contra referência de 60
-   dígitos em escalas normal, próxima de 10³⁰⁸ e subnormal.
+   dígitos em escalas normal, próxima de 10³⁰⁸ e subnormal; propagação de Kepler contra as
+   equações de Kepler clássica, hiperbólica e de Barker; erro do integrador numérico contra
+   a solução analítica, sua redução com a tolerância e a conservação de energia e momento
+   angular; consumo de propelente contra Tsiolkovsky; Hohmann contra formas fechadas.
 
 Além disso, os testes cobrem entradas inválidas (NaN, ±∞, texto, valores lógicos, unidades
 incompatíveis, separador de milhar), domínios (a = 0, r > 2a, ε = 0, e ≥ 1, órbita abaixo da
 superfície), entradas extremas que não podem gerar traceback na interface e as regressões
 dos problemas encontrados na auditoria ([AUDITORIA_ETAPA1.md](AUDITORIA_ETAPA1.md)).
 
-## 8. Limitações conhecidas
+## 12. Limitações conhecidas
 
 - Incertezas das constantes não são propagadas aos resultados.
-- Órbitas usam o μ do corpo central (veículo de massa desprezível); ver "Massas comparáveis".
+- Órbitas usam o μ do corpo central (veículo de massa desprezível); ver "Massa do segundo
+  corpo" (seção 6).
 - Corpos modelados como esferas; não há achatamento, rotação, atmosfera ou marés.
 - Fontes gravitacionais em `NewtonianGravity` são fixas (sem movimento próprio).
-- Não há ainda integração numérica de trajetórias (etapa 2) — somente relações analíticas.
+- A simulação usa apenas o modelo de dois corpos: sem achatamento (J2), arrasto, terceiros
+  corpos (Lua e Sol sobre satélites da Terra), pressão de radiação nem efeitos relativísticos.
+  Para esse modelo a solução de Kepler é exata; o integrador numérico existe para receber
+  modelos com perturbações nas próximas etapas, que exigirão nova validação.
+- O erro global do integrador cresce com o tempo simulado (aproximadamente com o quadrado do
+  número de órbitas); em simulações longas, reduza `rtol` e confira o erro exibido.
+- Manobras são impulsivas; não há queimas de duração finita, controle de atitude, estágios
+  de lançador nem subida atmosférica.
+- O referencial não tem época: não é possível comparar uma simulação com a posição de um
+  satélite real em uma data.
 - A tabela de corpos tem apenas Sol, Terra e Lua; outros corpos virão de fontes confiáveis
   importadas na etapa 4.
 
-## 9. Referências
+## 13. Referências
 
 - Tiesinga, E. et al. *CODATA recommended values of the fundamental physical constants: 2018*.
   Rev. Mod. Phys. 93, 025010 (2021).
@@ -224,5 +395,11 @@ dos problemas encontrados na auditoria ([AUDITORIA_ETAPA1.md](AUDITORIA_ETAPA1.m
   Rotational Elements: 2009*. Celest. Mech. Dyn. Astron. 109, 101–135 (2011).
 - Curtis, H. D. *Orbital Mechanics for Engineering Students*. Elsevier.
 - Vallado, D. A. *Fundamentals of Astrodynamics and Applications*. Microcosm Press.
-- Press, W. H. et al. *Numerical Recipes*, seção 5.6 (equações quadráticas e cúbicas).
-  Cambridge University Press.
+- Press, W. H. et al. *Numerical Recipes*, seções 5.6 (equações quadráticas e cúbicas) e 9.4
+  (Newton protegido por bisseção, *rtsafe*). Cambridge University Press.
+- Dormand, J. R.; Prince, P. J. *A family of embedded Runge-Kutta formulae*. J. Comput. Appl.
+  Math. 6, 19–26 (1980).
+- Hairer, E.; Nørsett, S. P.; Wanner, G. *Solving Ordinary Differential Equations I: Nonstiff
+  Problems*, 2ª ed. Springer (1993) — método DOP853.
+- Virtanen, P. et al. *SciPy 1.0: fundamental algorithms for scientific computing in
+  Python*. Nature Methods 17, 261–272 (2020).
