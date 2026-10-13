@@ -437,7 +437,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     em silêncio com código 1, sem rastreamento de pilha.
     """
     try:
-        return _main(argv)
+        code = _main(argv)
+        sys.stdout.flush()  # erros de escrita aparecem aqui, e não no encerramento do interpretador
+        return code
     except BrokenPipeError:
         _silence_closed_stdout()
         return 1

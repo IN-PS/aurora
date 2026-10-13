@@ -7,11 +7,33 @@ com menos propelente.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 
 from ..core.validation import as_non_negative, as_positive, as_real
+from ..data.constants import G0
 from ..errors import DomainError, InvalidParameterError
 from ..physics.maneuvers import propellant_for_delta_v, rocket_delta_v
+
+
+def propellant_required(dry_mass: float, isp: float, delta_v: float) -> float:
+    """Propelente (kg) para um veículo de massa seca ``dry_mass`` (kg) somar ``delta_v`` (m/s).
+
+    Tsiolkovsky com a massa final igual à massa seca: m_p = m_seca·(exp(Δv/(Isp·g0)) − 1).
+    Para várias queimas, ``delta_v`` é a soma dos módulos (as razões de massa se multiplicam).
+    """
+    dry_mass = as_positive("dry_mass", dry_mass)
+    isp = as_positive("isp", isp)
+    delta_v = as_non_negative("delta_v", delta_v)
+    try:
+        propellant = dry_mass * math.expm1(delta_v / (isp * G0))
+    except (OverflowError, ZeroDivisionError):
+        propellant = math.inf
+    if not math.isfinite(propellant):
+        raise DomainError(
+            f"Δv = {delta_v:.6g} m/s exigiria massa de propelente não representável com Isp = {isp:.6g} s."
+        )
+    return propellant
 
 
 @dataclass(frozen=True)

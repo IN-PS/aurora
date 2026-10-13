@@ -22,7 +22,7 @@ from ..data.bodies import CelestialBody, get_body
 from ..errors import AuroraError, DomainError, InvalidParameterError
 from ..physics.gravitation import TwoBodyGravity
 from ..physics.maneuvers import HohmannTransfer, hohmann_transfer
-from ..physics.orbits import TwoBodyOrbit, orbit_from_state
+from ..physics.orbits import OrbitType, TwoBodyOrbit, orbit_from_state
 from ..simulation.initial_conditions import circular_orbit_state, elliptic_orbit_state
 from ..simulation.missions import HohmannMission, simulate_hohmann
 from ..simulation.propagator import METHODS, IntegratorSettings, Trajectory, propagate
@@ -34,7 +34,7 @@ from ..simulation.validation import (
     specific_energy_series,
     standard_cases,
 )
-from ..simulation.vehicle import Spacecraft
+from ..simulation.vehicle import Spacecraft, propellant_required
 from ._common import _fmt, _fmt_quantity, _print_footer, _print_json, _print_list
 from .plots import SUPPORTED_FORMATS, Marker, figure_for_trajectory, save_figure
 
@@ -54,6 +54,13 @@ def _positive_int(text: str) -> int:
     if value < 2:
         raise argparse.ArgumentTypeError("O número de amostras deve ser pelo menos 2.")
     return value
+
+
+def _limit(text: str) -> int:
+    try:
+        return int(text.strip().replace("_", ""))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Número inteiro inválido: {text.strip()!r}.") from None
 
 
 def _real(text: str) -> float:
@@ -76,11 +83,14 @@ def _parse_vector(text: str, default_unit: str, name: str) -> np.ndarray:
                 f"esperava-se {expected.dimension.value}."
             )
         tokens = tokens[:3]
+    hint = f"{name} deve ter três componentes separados por espaço, com unidade opcional; ex.: \"7000 0 0 km\"."
     if len(tokens) != 3:
-        raise InvalidParameterError(
-            f"{name} deve ter três componentes separados por espaço, com unidade opcional; ex.: \"7000 0 0 km\"."
-        )
-    return np.array([units.to_si(units.parse_number(t), unit.symbol) for t in tokens])
+        raise InvalidParameterError(hint)
+    try:
+        values = [units.parse_number(t) for t in tokens]
+    except AuroraError as exc:
+        raise InvalidParameterError(f"{exc} {hint}") from None
+    return np.array([units.to_si(x, unit.symbol) for x in values])
 
 
 def _check_output_paths(telemetry: str | None, graphs: list[str] | None) -> None:
@@ -94,7 +104,7 @@ def _check_output_paths(telemetry: str | None, graphs: list[str] | None) -> None
 
 
 def _settings(args: argparse.Namespace) -> IntegratorSettings:
-    return IntegratorSettings(method=args.metodo, rtol=args.rtol)
+    return IntegratorSettings(method=args.metodo, rtol=args.rtol, max_evaluations=args.max_avaliacoes)
 
 
 # --------------------------------------------------------------------------------------
@@ -114,9 +124,18 @@ def _orbit_text(orbit: TwoBodyOrbit) -> str:
     return "; ".join(parts)
 
 
+_ORBIT_KEYS = {
+    OrbitType.CIRCULAR: "circular",
+    OrbitType.ELLIPTIC: "eliptica",
+    OrbitType.PARABOLIC: "parabolica",
+    OrbitType.HYPERBOLIC: "hiperbolica",
+    OrbitType.RADIAL: "radial",
+}
+
+
 def _orbit_dict(orbit: TwoBodyOrbit) -> dict[str, Any]:
     return {
-        "tipo": orbit.orbit_type.name.lower(),
+        "tipo": _ORBIT_KEYS[orbit.orbit_type],
         "descricao": orbit.orbit_type.value,
         "semieixo_maior_m": orbit.semi_major_axis,
         "excentricidade": orbit.eccentricity,
@@ -357,9 +376,7 @@ def _cmd_hohmann(args: argparse.Namespace) -> int:
     if args.propelente is not None:
         propellant = units.parse_quantity(args.propelente, "kg")
     else:  # exatamente o necessário (Tsiolkovsky), para a simulação não falhar por falta de propelente
-        from ..data.constants import G0
-
-        propellant = dry * math.expm1(transfer.delta_v_total / (isp * G0)) * (1.0 + 1e-12)
+        propellant = propellant_required(dry, isp, transfer.delta_v_total)
     craft = Spacecraft(name="Veículo virtual", dry_mass=dry, propellant_mass=propellant, isp=isp)
     mission: HohmannMission = simulate_hohmann(
         body, transfer.r1, transfer.r2, spacecraft=craft, settings=_settings(args), n_points=args.pontos
@@ -495,6 +512,8 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 def _add_integrator_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--rtol", type=_real, default=1e-10, help="tolerância relativa do integrador (padrão: 1e-10)")
     p.add_argument("--metodo", choices=METHODS, default="DOP853", help="método de integração (padrão: DOP853)")
+    p.add_argument("--max-avaliacoes", type=_limit, default=IntegratorSettings.max_evaluations, metavar="N",
+                   help="limite de avaliações da função por trecho (padrão: %(default)s)")
 
 
 def _add_output_options(p: argparse.ArgumentParser) -> None:

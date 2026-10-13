@@ -23,7 +23,7 @@ from ..physics.gravitation import TwoBodyGravity
 from ..physics.maneuvers import HohmannTransfer, hohmann_transfer
 from ..physics.orbits import TwoBodyOrbit, orbit_from_state, orbital_period
 from .propagator import IntegratorSettings, Termination, Trajectory, concatenate, propagate
-from .vehicle import Spacecraft
+from .vehicle import Spacecraft, propellant_required
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,11 @@ def simulate_hohmann(
     final_coast_orbits: float = 1.0,
     n_points: int = 300,
 ) -> HohmannMission:
-    """Simula a transferência de Hohmann entre órbitas circulares de raios ``r1`` e ``r2`` (m)."""
+    """Simula a transferência de Hohmann entre órbitas circulares de raios ``r1`` e ``r2`` (m).
+
+    Sem ``spacecraft``, usa um veículo virtual padrão (1000 kg secos, Isp = 300 s) com
+    exatamente o propelente necessário para as duas queimas.
+    """
     r1, r2 = as_positive("r1", r1), as_positive("r2", r2)
     for name, radius in (("r1", r1), ("r2", r2)):
         if radius <= body.radius:
@@ -82,8 +86,13 @@ def simulate_hohmann(
         raise DomainError("As órbitas inicial e final são iguais: não há transferência a simular.")
     final_coast_orbits = as_non_negative("final_coast_orbits", final_coast_orbits)
     settings = settings if settings is not None else IntegratorSettings()
-    craft = spacecraft if spacecraft is not None else Spacecraft(propellant_mass=1e9)
     transfer = hohmann_transfer(body.mu, r1, r2)
+    if spacecraft is None:
+        default = Spacecraft()
+        spacecraft = Spacecraft(
+            propellant_mass=propellant_required(default.dry_mass, default.isp, transfer.delta_v_total)
+        )
+    craft = spacecraft
     model = TwoBodyGravity(body.mu)
 
     position = np.array((r1, 0.0, 0.0))

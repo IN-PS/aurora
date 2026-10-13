@@ -1,7 +1,7 @@
 """Gráficos de trajetórias simuladas.
 
 * Arquivos ``.png``, ``.svg`` ou ``.pdf``: figura estática (Matplotlib, API orientada a
-  objetos, sem depender de interface gráfica) com projeção da órbita no plano xy, vista 3D,
+  objetos, sem depender de interface gráfica) com projeção no plano da órbita inicial, vista 3D,
   altitude e velocidade em função do tempo e, quando disponível, o erro numérico medido
   contra a solução de Kepler e a variação relativa da energia.
 * Arquivos ``.html``: página interativa autocontida (Plotly embutido, funciona sem
@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -459,6 +460,9 @@ new MutationObserver(draw).observe(document.documentElement, { attributes: true,
 """
 
 
+_PLACEHOLDER = re.compile(r"__(?:TITLE|DISCLAIMER|SUMMARY|DATA|PLOTLY)__")
+
+
 def _save_html(path: Path, data: FigureData) -> None:
     plotly_js = _plotly_js()
     origin: DataOrigin = data.segments[0].trajectory.origin
@@ -466,13 +470,15 @@ def _save_html(path: Path, data: FigureData) -> None:
         f"<tr><th scope=\"row\">{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
         for label, value in data.summary
     )
-    page = (
-        _HTML_TEMPLATE.replace("__TITLE__", html.escape(data.title))
-        .replace("__DISCLAIMER__", html.escape(f"Natureza do resultado: {origin.disclaimer}"))
-        .replace("__SUMMARY__", rows or "<tr><td>—</td></tr>")
-        .replace("__DATA__", json.dumps(_html_payload(data), ensure_ascii=True).replace("</", "<\\/"))
-        .replace("__PLOTLY__", plotly_js.replace("</script", "<\\/script"))
-    )
+    values = {
+        "__TITLE__": html.escape(data.title),
+        "__DISCLAIMER__": html.escape(f"Natureza do resultado: {origin.disclaimer}"),
+        "__SUMMARY__": rows or "<tr><td>—</td></tr>",
+        "__DATA__": json.dumps(_html_payload(data), ensure_ascii=True).replace("</", "<\\/"),
+        "__PLOTLY__": plotly_js.replace("</script", "<\\/script"),
+    }
+    # Substituição em uma só passagem: um título contendo "__DATA__" não é reinterpretado.
+    page = _PLACEHOLDER.sub(lambda m: values[m.group(0)], _HTML_TEMPLATE)
     path.write_text(page, encoding="utf-8")
 
 

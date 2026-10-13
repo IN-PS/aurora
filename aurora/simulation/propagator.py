@@ -45,6 +45,9 @@ class IntegratorSettings:
     """Tolerância absoluta por componente de velocidade, em m/s."""
     max_step: float = math.inf
     """Maior passo permitido, em s (``inf`` = sem limite)."""
+    max_evaluations: int = 2_000_000
+    """Limite de avaliações da aceleração; protege contra simulações longas demais (da ordem de
+    meio minuto num computador de mesa com o valor padrão)."""
 
     def __post_init__(self) -> None:
         if self.method not in METHODS:
@@ -58,6 +61,9 @@ class IntegratorSettings:
         as_positive("atol_velocity", self.atol_velocity)
         if not (self.max_step == math.inf or as_positive("max_step", self.max_step) > 0):
             raise InvalidParameterError("O passo máximo deve ser positivo.")
+        limit = self.max_evaluations
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 100:
+            raise InvalidParameterError("O limite de avaliações deve ser um inteiro maior ou igual a 100.")
 
     def describe(self) -> str:
         return (
@@ -72,6 +78,7 @@ class IntegratorSettings:
             "atol_posicao_m": self.atol_position,
             "atol_velocidade_m_s": self.atol_velocity,
             "passo_maximo_s": None if self.max_step == math.inf else self.max_step,
+            "limite_avaliacoes": self.max_evaluations,
         }
 
 
@@ -122,6 +129,10 @@ class Trajectory:
     @property
     def final_velocity(self) -> np.ndarray:
         return self.velocities[-1]
+
+
+class _EvaluationLimitReached(Exception):
+    pass
 
 
 _NUMERICAL_HYPOTHESIS = (
@@ -176,7 +187,13 @@ def propagate(
         collision.direction = -1  # type: ignore[attr-defined]
         events = [collision]
 
+    evaluations = 0
+
     def rhs(t: float, y: np.ndarray) -> np.ndarray:
+        nonlocal evaluations
+        evaluations += 1
+        if evaluations > settings.max_evaluations:
+            raise _EvaluationLimitReached
         acceleration = model.acceleration(y[:3], y[3:], t)
         return np.concatenate((y[3:], acceleration))
 
@@ -200,6 +217,11 @@ def propagate(
         raise SimulationError(f"A simulação foi interrompida: {exc}") from None
     except FloatingPointError:
         raise SimulationError("A simulação produziu valores fora do intervalo representável.") from None
+    except _EvaluationLimitReached:
+        raise SimulationError(
+            f"Limite de {settings.max_evaluations} avaliações da função atingido antes do fim da simulação: "
+            "reduza a duração, aumente a tolerância ou eleve o limite."
+        ) from None
     if solution.status == -1:
         raise SimulationError(f"O integrador numérico falhou: {solution.message}")
 

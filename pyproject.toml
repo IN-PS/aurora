@@ -5,14 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aurora-simulador"
 dynamic = ["version"]
-description = "AURORA — plataforma educacional de simulação de mecânica orbital, radar e exploração espacial (etapa 1: fundamentos matemáticos)."
+description = "AURORA — plataforma educacional de simulação de mecânica orbital, radar e exploração espacial (etapas 1 e 2: fundamentos e simulação orbital)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
+graficos = [
+    "matplotlib>=3.6",
+    "plotly>=5.0",
+]
 dev = [
     "pytest>=7.0",
 ]
