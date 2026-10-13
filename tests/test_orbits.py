@@ -241,3 +241,102 @@ def test_resumo_orbita_circular():
 def test_resumo_rejeita_orbita_abaixo_da_superficie():
     with pytest.raises(DomainError, match="intersectaria"):
         circular_orbit_summary(MOON, radius_from_altitude(MOON, -1.0))
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+def _state_from_elements(mu, a, e, inc, raan, argp, nu):
+    """Vetor de estado a partir de elementos clássicos (fórmulas perifocais; referência independente)."""
+    p = a * (1 - e * e)
+    r = p / (1 + e * math.cos(nu))
+    r_pf = np.array([r * math.cos(nu), r * math.sin(nu), 0.0])
+    v_pf = np.array([-math.sin(nu), e + math.cos(nu), 0.0]) * math.sqrt(mu / p)
+    cO, sO = math.cos(raan), math.sin(raan)
+    ci, si = math.cos(inc), math.sin(inc)
+    cw, sw = math.cos(argp), math.sin(argp)
+    Q = np.array(
+        [
+            [cO * cw - sO * sw * ci, -cO * sw - sO * cw * ci, sO * si],
+            [sO * cw + cO * sw * ci, -sO * sw + cO * cw * ci, -cO * si],
+            [sw * si, cw * si, ci],
+        ]
+    )
+    return Q @ r_pf, Q @ v_pf
+
+
+def test_ida_e_volta_elementos_estado_elementos():
+    # ORBI-6: orientações, anomalias e excentricidades arbitrárias (inclui e → 1 e hipérboles).
+    import random
+
+    rng = random.Random(11)
+    for _ in range(500):
+        hyper = rng.random() < 0.25
+        e = rng.uniform(1.05, 5.0) if hyper else rng.choice((rng.uniform(0.0, 0.99), rng.uniform(0.99, 0.9999)))
+        a = (-1.0 if hyper else 1.0) * 10 ** rng.uniform(6.8, 8.5)
+        inc = rng.uniform(0.0, math.pi)
+        nu_max = 0.9 * math.acos(-1.0 / e) if hyper else math.pi
+        r, v = _state_from_elements(MU, a, e, inc, rng.uniform(0, 2 * math.pi), rng.uniform(0, 2 * math.pi),
+                                    rng.uniform(-nu_max, nu_max))
+        orbit = orbit_from_state(MU, r, v)
+        assert orbit.orbit_type is (OrbitType.HYPERBOLIC if hyper else OrbitType.ELLIPTIC)
+        assert orbit.semi_major_axis == pytest.approx(a, rel=1e-10)
+        assert orbit.eccentricity == pytest.approx(e, abs=1e-13)
+        assert orbit.inclination == pytest.approx(inc, abs=1e-13)
+
+
+def test_trajetoria_quase_radial_ligada_nao_e_parabolica():
+    # ORBI-1: com velocidade tangencial de 5 cm/s o estado era rotulado PARABÓLICO, com T = ∞.
+    radial = orbit_from_state(MU, [EARTH.radius, 0, 0], [3000.0, 0.0, 0])
+    for vt in (0.05, 0.2):
+        orbit = orbit_from_state(MU, [EARTH.radius, 0, 0], [3000.0, vt, 0])
+        assert orbit.orbit_type is OrbitType.ELLIPTIC
+        assert orbit.period == pytest.approx(radial.period, rel=1e-9)
+        assert orbit.periapsis_radius + orbit.apoapsis_radius == pytest.approx(2 * orbit.semi_major_axis, rel=1e-14)
+    hyper = orbit_from_state(MU, [7e6, 0, 0], [2 * escape_speed(MU, 7e6), 1e-2, 0])
+    assert hyper.orbit_type is OrbitType.HYPERBOLIC and hyper.semi_major_axis < 0
+
+
+def test_escape_radial_tem_semieixo_infinito():
+    orbit = orbit_from_state(MU, [R_LEO, 0, 0], [escape_speed(MU, R_LEO), 0, 0])
+    assert orbit.orbit_type is OrbitType.RADIAL
+    assert orbit.semi_major_axis == math.inf and orbit.period == math.inf
+
+
+def test_inclinacao_pequena_e_recuperada_com_precisao():
+    # ORBI-3: com acos, i = 1e-9 rad era reportada como 0.
+    v = circular_orbital_speed(MU, R_LEO)
+    orbit = orbit_from_state(MU, [R_LEO, 0, 0], [0, v * math.cos(1e-9), v * math.sin(1e-9)])
+    assert orbit.inclination == pytest.approx(1e-9, rel=1e-6)
+
+
+def test_tolerancia_da_classificacao_e_limitada():
+    # PHYS-5: tol ≥ 1 classificava qualquer trajetória como radial.
+    v = circular_orbital_speed(MU, R_LEO)
+    for tol in (1e-2, 0.5, 1.0):
+        with pytest.raises(InvalidParameterError, match="tol"):
+            orbit_from_state(MU, [R_LEO, 0, 0], [0, v, 0], tol=tol)
+
+
+def test_estado_fora_do_intervalo_do_float64():
+    with pytest.raises(DomainError, match="representável"):
+        orbit_from_state(MU, [1e200, 0, 0], [1e200, 1e200, 0])
+
+
+def test_vetores_do_resultado_sao_somente_leitura():
+    v = circular_orbital_speed(MU, R_LEO)
+    orbit = orbit_from_state(MU, [R_LEO, 0, 0], [0, v, 0])
+    with pytest.raises(ValueError):
+        orbit.angular_momentum[0] = 1.0
+
+
+def test_raio_nao_positivo_gera_mensagem_de_altitude_negativa():
+    # PHYS-10/CLI--8: antes a mensagem citava o parâmetro interno 'radius'.
+    for radius in (0.0, -1.0):
+        with pytest.raises(DomainError, match="altitude negativa"):
+            circular_orbit_summary(EARTH, radius)
+
+
+def test_periodo_de_1_ua_concorda_com_o_ano_sideral():
+    # Com μ do Sol apenas, a diferença para o ano sideral (365,256363 d) é ≈ 1,5e-6 relativa.
+    assert circular_orbital_period(SUN.mu, AU) / 86400.0 == pytest.approx(365.256363, rel=3e-6)

@@ -6,7 +6,8 @@ CONSTANT_ACCELERATION = "Aceleração constante durante todo o intervalo conside
 ONE_DIMENSIONAL = "Movimento retilíneo (uma dimensão); o sinal indica o sentido no eixo."
 
 POINT_MASSES = (
-    "Corpos tratados como massas pontuais ou esferas com distribuição de massa esfericamente simétrica."
+    "Corpos tratados como massas pontuais ou esferas com distribuição de massa esfericamente simétrica, "
+    "com o ponto considerado fora das esferas (teorema das cascas)."
 )
 G_VALUE = (
     "G = 6,67430 × 10⁻¹¹ m³ kg⁻¹ s⁻² (CODATA 2018); a incerteza relativa de G (≈ 2,2 × 10⁻⁵) não é propagada."

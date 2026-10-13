@@ -73,7 +73,7 @@ def get_body(key: str) -> CelestialBody:
     body = _BODIES.get(_normalize(key))
     if body is None:
         known = ", ".join(sorted(_BODIES))
-        raise NotFoundError(f"Corpo celeste desconhecido: {key!r}. Disponíveis: {known}.")
+        raise NotFoundError(f"Corpo celeste desconhecido: {key.strip()!r}. Disponíveis: {known}.")
     return body
 
 

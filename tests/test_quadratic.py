@@ -2,6 +2,7 @@
 
 import math
 import random
+from fractions import Fraction
 
 import pytest
 
@@ -64,7 +65,7 @@ def test_relacoes_de_girard_vieta_em_coeficientes_aleatorios():
 
 
 def test_cancelamento_catastrofico_evitado():
-    # A fórmula ingênua (-b - sqrt(Δ))/(2a) daria ~7.45e-9 (erro de 25%) para a raiz pequena.
+    # A fórmula ingênua (-b + sqrt(Δ))/(2a) daria ≈ -7.45e-9 (erro de ~25 %) para a raiz pequena.
     sol = solve_quadratic(1.0, 1e8, 1.0)
     small, large = sol.roots[1], sol.roots[0]
     assert small == pytest.approx(-1e-8, rel=1e-15)
@@ -127,3 +128,78 @@ def test_a_igual_a_zero_e_rejeitado():
 def test_coeficientes_invalidos(bad):
     with pytest.raises(InvalidParameterError):
         solve_quadratic(1, bad, 1)
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "coef, expected",
+    [
+        ((1e308, 0.0, 1e308), (1j, -1j)),  # NUME-1: antes, OverflowError
+        ((1e308, 0.0, -1e308), (-1.0, 1.0)),
+        ((-1.7e308, 1.7e308, 1.7e308), (-0.6180339887498948, 1.618033988749895)),
+        ((5e-324, 5e-324, -5e-324), (-1.618033988749895, 0.6180339887498948)),  # NUME-2: antes, (-1, 1)
+        ((5e-324, 5e-324, 0.0), (-1.0, 0.0)),  # NUME-2: antes, erro espúrio
+    ],
+)
+def test_coeficientes_extremos_dao_raizes_corretas(coef, expected):
+    sol = solve_quadratic(*coef)
+    for got, exp in zip(sol.roots, expected, strict=True):
+        assert got == pytest.approx(exp, rel=1e-15, abs=0.0)
+
+
+def test_parte_real_de_raiz_complexa_com_b_subnormal():
+    sol = solve_quadratic(1e-300, 5e-324, 1.0)
+    assert sol.roots[0].real == pytest.approx(-2.4703282292062327e-24, rel=1e-15)
+    assert sol.roots[0].imag == pytest.approx(1e150, rel=1e-15)
+
+
+@pytest.mark.parametrize(
+    "coef, root",
+    [
+        ((Fraction(1), Fraction("0.6"), Fraction("0.09")), -0.3),  # (x + 0,3)²
+        ((1, Fraction("-0.2"), Fraction("0.01")), 0.1),  # (x − 0,1)²
+        ((Fraction("0.01"), Fraction("0.2"), 1), -10.0),
+    ],
+)
+def test_coeficientes_racionais_exatos_dao_raiz_dupla(coef, root):
+    # ARCH-1: decimais lidos exatamente (como faz a interface) preservam a raiz dupla.
+    sol = solve_quadratic(*coef)
+    assert sol.kind is RootKind.DOUBLE
+    assert sol.roots == (root, root)
+
+
+def test_floats_binarios_sao_tratados_pelo_valor_exato_do_float():
+    # 0.6 e 0.09 em float64 não são os decimais exatos; para esses binários Δ < 0 de fato.
+    sol = solve_quadratic(1.0, 0.6, 0.09)
+    assert sol.kind is RootKind.COMPLEX
+    assert sol.discriminant == float(Fraction(0.6) ** 2 - 4 * Fraction(0.09))
+
+
+def _reference_roots(a, b, c):
+    """Raízes em precisão estendida (60 dígitos) pela forma estável, para comparação."""
+    from decimal import Decimal, localcontext
+
+    with localcontext() as ctx:
+        ctx.prec = 60
+        a, b, c = Decimal(a), Decimal(b), Decimal(c)
+        d = b * b - 4 * a * c
+        if d > 0:
+            q = -(b + d.sqrt()) / 2 if b >= 0 else -(b - d.sqrt()) / 2
+            return sorted((q / a, c / q))
+        if d == 0:
+            return [-b / (2 * a)] * 2
+        return [-b / (2 * a), (-d).sqrt() / (2 * abs(a))]
+
+
+def test_precisao_de_poucos_ulp_em_varias_escalas():
+    # Normal, perto de 1,8e308 e subnormal: erro de no máximo 4 ulp em relação à referência.
+    rng = random.Random(99)
+    for lo, hi in ((-3, 3), (305, 307), (-322, -310)):
+        for _ in range(300):
+            a, b, c = (rng.choice((-1, 1)) * rng.uniform(1, 9.9) * 10.0 ** rng.randint(lo, hi) for _ in range(3))
+            sol = solve_quadratic(a, b, c)
+            got = [sol.roots[0].real, sol.roots[0].imag] if sol.kind is RootKind.COMPLEX else list(sol.roots)
+            for x, ref in zip(got, _reference_roots(a, b, c), strict=True):
+                assert abs(x - float(ref)) <= 4 * math.ulp(float(ref)), (a, b, c)

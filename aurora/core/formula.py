@@ -7,6 +7,10 @@ hipóteses do modelo — sem acoplar o modelo à interface.
 
 Ao registrar, conferimos que os parâmetros declarados coincidem com a assinatura da função e
 que todas as unidades estão no SI; incoerências são detectadas na importação do módulo.
+
+O registro é preenchido quando ``aurora.physics`` é importado. Referências bibliográficas
+gerais (livros-texto) acompanham as fórmulas orbitais; a bibliografia completa está em
+``docs/MODELOS_FISICOS.md``.
 """
 
 from __future__ import annotations
@@ -131,8 +135,12 @@ def register_formula(
     """
 
     def decorator(func: Callable[..., float]) -> Callable[..., float]:
-        if key in _REGISTRY:
-            raise ValueError(f"Fórmula já registrada: {key!r}")
+        previous = _REGISTRY.get(key)
+        if previous is not None:
+            original = getattr(previous.function, "__wrapped__", previous.function)
+            same_origin = (original.__module__, original.__qualname__) == (func.__module__, func.__qualname__)
+            if not same_origin:  # recarregar o mesmo módulo (ex.: autoreload em notebooks) é permitido
+                raise ValueError(f"Fórmula já registrada: {key!r}")
         signature_names = list(inspect.signature(func).parameters)
         if signature_names != list(parameters):
             raise ValueError(
@@ -142,14 +150,19 @@ def register_formula(
             if get_unit(symbol).factor != 1.0:
                 raise ValueError(f"A fórmula {key!r} deve usar unidades SI; recebido {symbol!r}")
 
+        message = (
+            f"O resultado de '{title}' não é representável em ponto flutuante de 64 bits "
+            "(valores de entrada extremos)."
+        )
+
         @functools.wraps(func)
         def checked(*args: Any, **kwargs: Any) -> float:
-            result = func(*args, **kwargs)
+            try:
+                result = func(*args, **kwargs)
+            except (ZeroDivisionError, OverflowError):  # rede de segurança para over/underflow
+                raise DomainError(message) from None
             if not math.isfinite(result):
-                raise DomainError(
-                    f"O resultado de '{title}' não é representável em ponto flutuante de 64 bits "
-                    "(valores de entrada extremos)."
-                )
+                raise DomainError(message)
             return result
 
         _REGISTRY[key] = Formula(
@@ -172,10 +185,14 @@ def get_formula(key: str) -> Formula:
 
     As fórmulas são registradas na importação de ``aurora.physics``.
     """
+    if not isinstance(key, str):
+        raise InvalidParameterError(f"A chave da fórmula deve ser um texto; recebido {key!r}.")
     formula = _REGISTRY.get(key.strip())
     if formula is None:
+        if not _REGISTRY:
+            raise NotFoundError("Nenhuma fórmula registrada: importe o pacote aurora.physics.")
         raise NotFoundError(
-            f"Fórmula desconhecida: {key!r}. Use o comando 'formulas' para ver as fórmulas disponíveis."
+            f"Fórmula desconhecida: {key.strip()!r}. Fórmulas disponíveis: {', '.join(sorted(_REGISTRY))}."
         )
     return formula
 

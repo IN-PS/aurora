@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aurora-simulador"
-version = "0.1.0"
+dynamic = ["version"]
 description = "AURORA — plataforma educacional de simulação de mecânica orbital, radar e exploração espacial (etapa 1: fundamentos matemáticos)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ dev = [
 
 [project.scripts]
 aurora = "aurora.interface.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "aurora.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["aurora*"]

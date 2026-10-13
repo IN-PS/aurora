@@ -4,9 +4,10 @@ Instituto Regional de Pesquisas Científicas, Tecnologia e Engenharia do Sul de 
 
 Organização em camadas (cada camada só depende das camadas acima dela na lista):
 
+- ``aurora.errors``: hierarquia de exceções (sem dependências);
 - ``aurora.data``: constantes físicas e dados de corpos celestes, com fontes citadas;
-- ``aurora.core``: erros, validação de parâmetros, unidades, registro de fórmulas e
-  procedência dos dados (analítico / simulado / medido);
+- ``aurora.core``: validação de parâmetros, unidades, registro de fórmulas e procedência
+  dos dados (analítico / simulado / medido);
 - ``aurora.physics``: modelos físicos e matemáticos (funções puras, unidades do SI);
 - ``aurora.interface``: interfaces com o usuário (por ora, linha de comando).
 

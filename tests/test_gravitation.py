@@ -102,3 +102,38 @@ def test_valores_de_referencia_dos_corpos():
     assert EARTH.radius == 6_378_137.0
     assert all(body.sources for body in (EARTH, MOON))
     assert math.isclose(G, 6.67430e-11)
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+def test_distancias_minusculas_e_enormes_nao_vazam_excecoes():
+    # NUME-3/PHYS-2: r*r sofria underflow (ZeroDivisionError) ou overflow (resultado 0).
+    assert gravitational_acceleration(0.0, 1e-170) == 0.0
+    assert gravitational_force(0.0, 0.0, 1e-300) == 0.0
+    with pytest.raises(DomainError, match="representável"):
+        gravitational_acceleration(EARTH.mu, 1e-170)
+    with pytest.raises(DomainError, match="representável"):
+        gravitational_force(1.0, 1.0, 1e-170)
+    assert gravitational_acceleration(EARTH.mu, 1e160) == pytest.approx(3.986004418e-306, rel=1e-15)
+
+
+def test_aceleracao_vetorial_extrema():
+    assert point_mass_acceleration(1.0, [1e-110, 0, 0]) == pytest.approx([-1e220, 0.0, 0.0])
+    with pytest.raises(DomainError, match="representável"):
+        point_mass_acceleration(1.0, [1e-200, 0, 0])
+
+
+def test_massa_pontual_tem_igualdade_por_identidade_e_e_hashable():
+    # PHYS-6: == retornava um array e hash() falhava.
+    p1, p2 = PointMass("A", 1.0, [0, 0, 0]), PointMass("A", 1.0, [0, 0, 0])
+    assert p1 == p1 and p1 != p2
+    assert len({p1, p2}) == 2
+
+
+def test_modelo_newtoniano_valida_fontes_e_velocidade():
+    with pytest.raises(InvalidParameterError, match="PointMass"):
+        NewtonianGravity([EARTH])
+    model = NewtonianGravity([PointMass.from_body(EARTH)])
+    with pytest.raises(InvalidParameterError):
+        model.acceleration(np.array([7e6, 0, 0]), velocity="lixo")

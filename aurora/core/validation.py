@@ -4,6 +4,11 @@ Todas as funções retornam o valor convertido para ``float`` (ou ``numpy.ndarra
 ``float64``) e levantam :class:`~aurora.errors.InvalidParameterError` com mensagem em
 português quando a entrada é inválida. Valores lógicos (``True``/``False``), textos, números
 complexos, NaN e infinitos são sempre rejeitados.
+
+Tipos aceitos em escalares: ``int``, ``float``, :class:`fractions.Fraction` e escalares reais do
+NumPy (tipos registrados como :class:`numbers.Real`). :class:`decimal.Decimal` não é aceito
+(não é registrado como ``numbers.Real``); converta-o com ``float()`` ou ``Fraction()``.
+Vetores aceitam listas, tuplas ou arrays de inteiros ou floats.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ def as_non_negative(name: str, value: object) -> float:
     x = as_real(name, value)
     if x < 0.0:
         raise InvalidParameterError(f"O parâmetro '{name}' não pode ser negativo; recebido {x!r}.")
-    return x
+    return x + 0.0  # normaliza −0.0 para 0.0
 
 
 def as_nonzero(name: str, value: object) -> float:

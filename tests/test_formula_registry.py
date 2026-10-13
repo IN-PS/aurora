@@ -97,3 +97,60 @@ def test_registro_rejeita_unidade_fora_do_si():
         )
         def _f(x):
             return x
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+def test_rede_de_seguranca_converte_divisao_por_zero_em_erro_de_dominio():
+    from aurora.core import formula as formula_module
+
+    @register_formula(
+        key="_teste_divisao",
+        title="teste",
+        expression="y = 1/x",
+        unit="m",
+        parameters={"x": ("x", "m")},
+        hypotheses=("h",),
+    )
+    def _f(x):
+        return 1.0 / (x * 0.0)
+
+    try:
+        with pytest.raises(DomainError, match="não é representável"):
+            get_formula("_teste_divisao").evaluate(x=1.0)
+    finally:
+        formula_module._REGISTRY.pop("_teste_divisao", None)
+
+
+def test_recarregar_modulo_nao_duplica_nem_quebra_o_registro():
+    # ARCH-4: reload (ex.: autoreload em notebooks) levantava ValueError. Executado em outro
+    # processo porque reload recria as classes do módulo e afetaria os demais testes.
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = (
+        "import importlib, aurora.physics, aurora.physics.orbits as o\n"
+        "from aurora.core.formula import list_formulas\n"
+        "n = len(list_formulas()); importlib.reload(o); assert len(list_formulas()) == n; print(n)"
+    )
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "18"
+
+
+def test_mensagens_de_busca_de_formula():
+    with pytest.raises(NotFoundError, match="Fórmulas disponíveis: .*velocidade_escape"):
+        get_formula("inexistente")
+    with pytest.raises(InvalidParameterError):
+        get_formula(None)
+
+
+def test_formulas_orbitais_trazem_referencias_e_hipoteses_coerentes():
+    for key in ("velocidade_orbital_circular", "periodo_orbital_eliptico", "velocidade_vis_viva"):
+        assert get_formula(key).references
+    # ARCH-14: periapse/apoapse não dependem de μ.
+    for key in ("raio_periapse", "raio_apoapse"):
+        assert not any("μ = G·M" in h for h in get_formula(key).hypotheses)

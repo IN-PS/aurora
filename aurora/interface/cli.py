@@ -22,6 +22,7 @@ import math
 import re
 import sys
 from collections.abc import Sequence
+from fractions import Fraction
 from typing import Any
 
 from .. import __version__, physics  # noqa: F401  (importar ``physics`` registra as fórmulas)
@@ -47,7 +48,7 @@ def _fmt(x: float, digits: int = 10) -> str:
         return "indefinido"
     if math.isinf(x):
         return "∞" if x > 0 else "−∞"
-    return f"{x:.{digits}g}"
+    return f"{x + 0.0:.{digits}g}"  # "+ 0.0" evita exibir "-0"
 
 
 def _fmt_quantity(value: float, unit: str) -> str:
@@ -56,7 +57,10 @@ def _fmt_quantity(value: float, unit: str) -> str:
     if math.isfinite(value):
         alts = []
         for alt in units.display_alternatives(unit):
-            converted = units.from_si(value, alt)
+            try:
+                converted = units.from_si(value, alt)
+            except AuroraError:  # conversão apenas ilustrativa: omitida se exceder o float64
+                continue
             if 0.01 <= abs(converted) < 1e9:  # omite conversões pouco legíveis (ex.: 3e-11 ua)
                 alts.append(f"{_fmt(converted, 7)} {alt}")
         if alts:
@@ -70,8 +74,11 @@ def _fmt_complex(z: complex) -> str:
 
 
 def _json_safe(obj: Any) -> Any:
-    if isinstance(obj, float) and not math.isfinite(obj):
-        return "nan" if math.isnan(obj) else ("inf" if obj > 0 else "-inf")
+    """Prepara para JSON estrito: não finitos viram os textos "inf", "-inf" ou "nan"; −0.0 vira 0.0."""
+    if isinstance(obj, float):
+        if not math.isfinite(obj):
+            return "nan" if math.isnan(obj) else ("inf" if obj > 0 else "-inf")
+        return obj + 0.0
     if isinstance(obj, dict):
         return {k: _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -80,7 +87,9 @@ def _json_safe(obj: Any) -> Any:
 
 
 def _print_json(data: Any) -> None:
-    print(json.dumps(_json_safe(data), ensure_ascii=False, indent=2, allow_nan=False))
+    # ensure_ascii: caracteres como μ, ☉ e ç viram escapes \\uXXXX e não são corrompidos quando a
+    # saída padrão não é UTF-8 (ex.: redirecionamento no Windows).
+    print(json.dumps(_json_safe(data), ensure_ascii=True, indent=2, allow_nan=False))
 
 
 def _print_list(title: str, items: Sequence[str]) -> None:
@@ -106,6 +115,21 @@ _ROOT_KIND_CODES = {
 }
 
 
+_DISCRIMINANT_SIGN = {RootKind.TWO_REAL: 1, RootKind.DOUBLE: 0, RootKind.COMPLEX: -1}
+
+
+def _fmt_discriminant(sol: QuadraticSolution) -> str:
+    """Relação para Δ arredondado, sem sugerir 'infinito' ou 'zero' quando Δ só excede o float64."""
+    d = sol.discriminant
+    if math.isinf(d):
+        bound = _fmt(sys.float_info.max)
+        return f"{'> ' if d > 0 else '< −'}{bound} (excede o intervalo do float64; o sinal é exato)"
+    if d == 0.0 and sol.kind is not RootKind.DOUBLE:
+        relation = "> 0" if sol.kind is RootKind.TWO_REAL else "< 0"
+        return f"{relation}, com módulo menor que o menor float64 (≈ 4.9e-324)"
+    return f"= {_fmt(d)}"
+
+
 def _cmd_quadratic(args: argparse.Namespace) -> int:
     sol: QuadraticSolution = solve_quadratic(args.a, args.b, args.c)
     if args.json:
@@ -118,15 +142,17 @@ def _cmd_quadratic(args: argparse.Namespace) -> int:
                 "equacao": "a*x^2 + b*x + c = 0",
                 "coeficientes": {"a": sol.a, "b": sol.b, "c": sol.c},
                 "discriminante": sol.discriminant,
+                "sinal_discriminante": _DISCRIMINANT_SIGN[sol.kind],
                 "classificacao": _ROOT_KIND_CODES[sol.kind],
                 "descricao": sol.kind.value,
                 "raizes": roots,
+                "origem": DataOrigin.ANALYTIC.value,
             }
         )
         return 0
 
     print(f"Equação: ({_fmt(sol.a)})·x² + ({_fmt(sol.b)})·x + ({_fmt(sol.c)}) = 0")
-    print(f"Discriminante: Δ = b² − 4·a·c = {_fmt(sol.discriminant)}")
+    print(f"Discriminante: Δ = b² − 4·a·c {_fmt_discriminant(sol)}")
     print(f"Classificação: {sol.kind.value}")
     if sol.kind is RootKind.DOUBLE:
         print(f"  x₁ = x₂ = {_fmt(sol.roots[0])}")  # type: ignore[arg-type]
@@ -135,8 +161,9 @@ def _cmd_quadratic(args: argparse.Namespace) -> int:
             text = _fmt_complex(root) if isinstance(root, complex) else _fmt(root)
             print(f"  {label} = {text}")
     print(
-        "Método: Δ calculado em aritmética racional exata; raízes pela forma numericamente estável "
-        "q = −(b + sinal(b)·√Δ)/2, x = q/a e x = c/q."
+        "Método: Δ calculado em aritmética racional exata a partir dos coeficientes digitados "
+        "(decimais lidos sem arredondamento); raízes pela forma numericamente estável "
+        "q = −(b + sinal(b)·√Δ)/2, x = q/a e x = c/q, arredondadas uma única vez."
     )
     return 0
 
@@ -201,6 +228,8 @@ def _cmd_calculate(args: argparse.Namespace) -> int:
     inputs = _parse_assignments(formula, args.valores)
     result = formula.evaluate(**inputs)
     if args.em is not None:
+        args.em = args.em.strip()
+        # valida a unidade e a conversão (dimensão e overflow) antes de qualquer saída
         units.from_si(result.value, args.em, expected=units.get_unit(formula.unit).dimension)
     if args.json:
         data = result.to_dict()
@@ -288,25 +317,52 @@ class _Formatter(argparse.RawDescriptionHelpFormatter):
         super().add_usage(usage, actions, groups, prefix if prefix is not None else "uso: ")
 
 
+# Tradução das mensagens geradas pelo próprio argparse (em inglês). Mensagens sem
+# correspondência são exibidas sem alteração.
+_ARGPARSE_MESSAGES = (
+    (re.compile(r"^the following arguments are required: (.+)$"), r"argumentos obrigatórios ausentes: \1"),
+    (re.compile(r"^unrecognized arguments: (.+)$"), r"argumentos não reconhecidos: \1"),
+    (
+        re.compile(r"^argument (.+?): invalid choice: (.+?) \(choose from (.+)\)$"),
+        r"argumento \1: opção inválida: \2 (escolha entre \3)",
+    ),
+    (re.compile(r"^argument (.+?): expected one argument$"), r"argumento \1: esperava um valor"),
+    (re.compile(r"^argument (.+?): not allowed with argument (.+)$"), r"argumento \1: não pode ser usado com \2"),
+    (re.compile(r"^one of the arguments (.+) is required$"), r"informe um dos argumentos: \1"),
+    (re.compile(r"^ambiguous option: (.+?) could match (.+)$"), r"opção ambígua: \1 pode corresponder a \2"),
+    (re.compile(r"^argument (.+?): (.+)$"), r"argumento \1: \2"),
+)
+
+
+def _translate_argparse(message: str) -> str:
+    for pattern, replacement in _ARGPARSE_MESSAGES:
+        if pattern.match(message):
+            return pattern.sub(replacement, message)
+    return message
+
+
 class _Parser(argparse.ArgumentParser):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault("formatter_class", _Formatter)
         kwargs.setdefault("add_help", False)
+        kwargs.setdefault("allow_abbrev", False)
         super().__init__(*args, **kwargs)
         self._positionals.title = "argumentos"
         self._optionals.title = "opções"
-        self.add_argument("-h", "--ajuda", action="help", help="mostra esta ajuda e sai")
+        self.add_argument("-h", "--ajuda", "--help", action="help", help="mostra esta ajuda e sai")
 
     def error(self, message: str) -> None:  # type: ignore[override]
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: erro: {message}\n")
+        self.exit(2, f"{self.prog}: erro: {_translate_argparse(message)}\n")
 
 
-def _number(text: str) -> float:
+def _number(text: str) -> Fraction:
+    """Coeficiente numérico com o valor decimal exato digitado (``0.1`` é exatamente 1/10)."""
     try:
-        return units.parse_number(text)
+        units.parse_number(text)  # valida o formato e o intervalo representável
     except AuroraError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from None
+    return Fraction(text.strip().replace(",", "."))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -317,7 +373,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Todos os resultados são calculados com modelos idealizados; nenhum é medição."
         ),
     )
-    parser.add_argument("--versao", action="version", version=f"AURORA {__version__}", help="mostra a versão e sai")
+    parser.add_argument(
+        "--versao", "--version", action="version", version=f"AURORA {__version__}", help="mostra a versão e sai"
+    )
     sub = parser.add_subparsers(dest="comando", title="comandos", metavar="COMANDO", parser_class=_Parser)
     sub.required = True
 
@@ -385,10 +443,21 @@ def _configure_output() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Ponto de entrada. Retorna 0 (sucesso), 1 (erro de cálculo/entrada) ou 2 (uso incorreto)."""
+    """Ponto de entrada. Retorna 0 em caso de sucesso e 1 em erro de cálculo ou de entrada.
+
+    Como no ``argparse``, erros de uso (código 2) e as opções ``--ajuda``/``--versao``
+    (código 0) encerram a execução levantando ``SystemExit``.
+    """
     _configure_output()
     parser = build_parser()
-    args = parser.parse_args(_protect_negative_numbers(sys.argv[1:] if argv is None else argv))
+    args, extras = parser.parse_known_args(_protect_negative_numbers(sys.argv[1:] if argv is None else argv))
+    if extras:
+        # Antes do Python 3.13, uma opção entre a chave da fórmula e os valores (ex.:
+        # "calcular F --json mu=1 r=1") deixa os valores como "não reconhecidos".
+        if getattr(args, "comando", None) == "calcular" and not any(e.startswith("-") for e in extras):
+            args.valores = [*args.valores, *extras]
+        else:
+            parser.error(f"unrecognized arguments: {' '.join(e.strip() for e in extras)}")
     try:
         return args.handler(args)
     except AuroraError as exc:

@@ -105,7 +105,7 @@ def test_parse_quantity(text, default, expected):
     assert units.parse_quantity(text, default) == pytest.approx(expected, rel=1e-15)
 
 
-@pytest.mark.parametrize("text", ["", "km", "abc", "1.2.3 km", "6.378.137", "nan", "inf m"])
+@pytest.mark.parametrize("text", ["", "km", "abc", "1.2.3 km", "6.378.137", "nan", "inf m", None, 5])
 def test_parse_quantity_invalida(text):
     with pytest.raises((InvalidParameterError, NotFoundError)):
         units.parse_quantity(text, "m")
@@ -130,3 +130,47 @@ def test_parse_number():
 def test_cada_dimensao_tem_unidade_si():
     for dim in Dimension:
         assert units.si_unit(dim).factor == 1.0
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+def test_um_unico_separador_e_sempre_decimal():
+    # Documentado: "1.000 km" é 1 km (não 1000 km); a interface ecoa o valor em SI.
+    assert units.parse_quantity("1.000 km", "m") == 1000.0
+    assert units.parse_quantity("1,5 km", "m") == 1500.0
+
+
+@pytest.mark.parametrize("text", ["6.778.137 km", "1,000,000", "1.000,5", "-1.2.3"])
+def test_separador_de_milhar_e_rejeitado_com_mensagem_clara(text):
+    # NUME-4/ARCH-12: antes a mensagem falava em unidade desconhecida ('.137 km').
+    with pytest.raises(InvalidParameterError, match="Separador de milhar"):
+        units.parse_quantity(text, "m")
+
+
+def test_leitura_de_grandeza_em_tempo_linear():
+    # NUME-7: o regex anterior levava ~5 s com 40 000 caracteres.
+    import time
+
+    text = "1" + " " * 40_000 + "x" + " " * 10
+    start = time.perf_counter()
+    with pytest.raises(NotFoundError):
+        units.parse_quantity(text, "m")
+    assert time.perf_counter() - start < 0.5
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, None, True, "3"])
+def test_conversoes_validam_o_valor(value):
+    with pytest.raises(InvalidParameterError):
+        units.to_si(value, "km")
+
+
+def test_conversoes_detectam_overflow():
+    with pytest.raises(InvalidParameterError, match="excede"):
+        units.to_si(1e308, "ua")
+    with pytest.raises(InvalidParameterError, match="excede"):
+        units.from_si(1e308, "km/h")
+
+
+def test_menos_zero_e_normalizado():
+    assert math.copysign(1.0, as_non_negative("x", -0.0)) == 1.0

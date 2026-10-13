@@ -74,6 +74,22 @@ interfaces (CLI, painel web, notebooks) sem tocar nos modelos.
 - **Efemérides** (etapa 4) substituirão posições fixas por fontes dependentes do tempo, por
   meio de uma camada de importação em `aurora.data`.
 
+### O que funciona e o que ainda é protótipo (etapa 1)
+
+| Componente | Situação |
+|---|---|
+| Calculadora do 2º grau, 18 fórmulas registradas, unidades, validação, CLI | **Funcional e testado** |
+| `orbit_from_state`, `constant_acceleration_state`, `time_to_reach_position`, `NewtonianGravity` | **Funcional e testado**, mas só como API Python (sem comando na CLI) |
+| `GravityModel` | **Gancho de arquitetura**: protocolo sem consumidor até existir o integrador da etapa 2. Por ser `runtime_checkable`, `isinstance` só verifica a existência do método `acceleration`, não sua assinatura |
+| `NewtonianGravity` | Fontes **estáticas**; `velocity` é validada mas não usada e `time` é ignorado (reservados a modelos futuros) |
+| `DataOrigin.SIMULATED` / `MEASURED` | **Reservados**: nada no pacote produz esses valores ainda. A regra "o simulador nunca cria `MEASURED`" é convenção documentada, não imposta por código |
+| Painel gráfico (dashboard), radar virtual, propagação numérica, efemérides | **Não implementados** (etapas 2–4) |
+| Software de hardware | **Fora deste pacote** por decisão de arquitetura (seção 4) |
+
+O registro de fórmulas é preenchido como efeito da importação de `aurora.physics`; quem usa
+apenas `aurora.core.formula` deve importar `aurora.physics` antes. Recarregar um módulo de
+física (por exemplo, com *autoreload* em notebooks) é aceito sem duplicar registros.
+
 ## 4. Separação entre simulador e hardware
 
 O pacote `aurora` é **exclusivamente um simulador**. Requisitos de arquitetura:
@@ -109,7 +125,12 @@ O pacote `aurora` é **exclusivamente um simulador**. Requisitos de arquitetura:
 
 - Identificadores (módulos, funções, classes) em inglês, como os nomes de módulos da
   especificação (`physics_engine`, `radar_simulator`…); docstrings, mensagens de erro,
-  chaves de fórmulas e toda a interface em português brasileiro.
+  chaves de fórmulas e toda a interface em português brasileiro. As mensagens de erro de uso
+  geradas pelo `argparse` (em inglês na biblioteca padrão) são traduzidas por uma tabela de
+  padrões; uma mensagem sem padrão correspondente é exibida como está.
+- Integração contínua (`.github/workflows/testes.yml`): a suíte roda em Python 3.10–3.14 e
+  com a versão mínima declarada do NumPy, porque o comportamento do `argparse` muda entre
+  versões do Python (um defeito real da CLI só aparecia no 3.10–3.12).
 - Parâmetros das fórmulas usam os símbolos físicos (`mu`, `r`, `v0`, `T`…).
 - Grandezas ilimitadas (apoapse de hipérbole, período de trajetória aberta) são `math.inf`;
   grandezas indefinidas (inclinação de trajetória radial) são `math.nan`.

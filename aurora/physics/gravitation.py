@@ -20,6 +20,7 @@ newtoniano estático não os utilize.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -49,7 +50,7 @@ from . import hypotheses as H
 def gravitational_force(m1: float, m2: float, r: float) -> float:
     """Módulo da força de atração gravitacional, em N."""
     m1, m2, r = as_non_negative("m1", m1), as_non_negative("m2", m2), as_positive("r", r)
-    return G * m1 * m2 / (r * r)
+    return G * m1 * m2 / r / r  # divisões sucessivas: r*r não sofre underflow para r pequeno
 
 
 @register_formula(
@@ -79,17 +80,21 @@ def gravitational_parameter(M: float) -> float:  # noqa: N803 (símbolo da fórm
 def gravitational_acceleration(mu: float, r: float) -> float:
     """Módulo da aceleração gravitacional ``μ/r²`` em m/s²."""
     mu, r = as_non_negative("mu", mu), as_positive("r", r)
-    return mu / (r * r)
+    return mu / r / r
 
 
 def point_mass_acceleration(mu: float, position: object, source_position: object = (0.0, 0.0, 0.0)) -> np.ndarray:
     """Aceleração vetorial (m/s²) em ``position`` devida a uma massa pontual em ``source_position``."""
     mu = as_non_negative("mu", mu)
     d = as_vector("position", position) - as_vector("source_position", source_position)
-    r = float(np.linalg.norm(d))
+    r = math.hypot(*d)  # norma com reescala interna: sem overflow/underflow de |d|²
     if r == 0.0:
         raise DomainError("A posição coincide com a da massa pontual: aceleração indefinida (singularidade).")
-    return -mu * d / (r * r * r)
+    with np.errstate(over="ignore", invalid="ignore"):
+        acc = -(mu / r / r) * (d / r)
+    if not np.all(np.isfinite(acc)):
+        raise DomainError("A aceleração calculada não é representável em ponto flutuante de 64 bits.")
+    return acc
 
 
 @runtime_checkable
@@ -103,7 +108,7 @@ class GravityModel(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)  # igualdade por identidade: ndarray não define == escalar
 class PointMass:
     """Massa pontual com parâmetro gravitacional ``mu`` (m³/s²) fixa em ``position`` (m)."""
 
@@ -134,11 +139,15 @@ class NewtonianGravity:
         self.sources: tuple[PointMass, ...] = tuple(sources)
         if not self.sources:
             raise InvalidParameterError("É necessário ao menos uma fonte gravitacional.")
+        if not all(isinstance(source, PointMass) for source in self.sources):
+            raise InvalidParameterError("Todas as fontes gravitacionais devem ser objetos PointMass.")
 
     def acceleration(
         self, position: np.ndarray, velocity: np.ndarray | None = None, time: float = 0.0
     ) -> np.ndarray:
         as_real("time", time)
+        if velocity is not None:
+            as_vector("velocity", velocity)  # não usada pelo modelo newtoniano estático, mas validada
         total = np.zeros(3)
         for source in self.sources:
             total += point_mass_acceleration(source.mu, position, source.position)

@@ -94,3 +94,46 @@ def test_tempo_posicao_inatingivel_e_somente_futuro():
 def test_tempo_infinitas_solucoes():
     with pytest.raises(DomainError, match="infinitas"):
         time_to_reach_position(1.0, 0.0, 0.0, 1.0)
+
+
+# --- regressões da auditoria técnica (docs/AUDITORIA_ETAPA1.md) ---------------------------
+
+
+def test_altura_maxima_e_atingida_uma_vez_no_instante_de_retorno():
+    # PHYS-1: x = v0²/(2g) arredondado era declarado inatingível em ~50 % dos casos.
+    assert time_to_reach_position(0.0, 20.0, -9.8, 20.408163265306122) == pytest.approx((20.0 / 9.8,), rel=1e-15)
+
+
+def test_altura_maxima_em_lancamentos_aleatorios():
+    import random
+
+    rng = random.Random(5)
+    for _ in range(2000):
+        v0, g, x0 = rng.uniform(0.1, 500.0), rng.uniform(0.5, 30.0), rng.uniform(-1e4, 1e4)
+        apex = x0 + v0 * v0 / (2 * g)
+        assert time_to_reach_position(x0, v0, -g, apex) == pytest.approx((v0 / g,), rel=1e-12)
+        assert time_to_reach_position(x0, v0, -g, apex + 1e-6 * abs(apex) + 1e-6) == ()  # sem falso positivo
+        assert torricelli_speed(v0, -g, v0 * v0 / (2 * g)) == pytest.approx(0.0, abs=1e-6 * v0)
+
+
+def test_torricelli_com_movel_em_repouso():
+    # PHYS-3: com v0 = a = 0 nenhum deslocamento não nulo ocorre (antes retornava |v| = 0).
+    with pytest.raises(DomainError, match="repouso"):
+        torricelli_speed(v0=0.0, a=0.0, dx=5.0)
+    assert torricelli_speed(v0=0.0, a=0.0, dx=0.0) == 0.0
+
+
+def test_tempo_com_aceleracao_subnormal():
+    # NUME-5: a/2 sofria underflow e o erro dizia "a = 0".
+    assert time_to_reach_position(0.0, 0.0, 5e-324, 1e-320) == pytest.approx((63.623894882347464,), rel=1e-15)
+
+
+def test_tempo_nao_representavel_gera_erro():
+    with pytest.raises(DomainError, match="representável"):
+        time_to_reach_position(-1e308, 1.0, 0.0, 1e308)
+
+
+def test_estado_vetorial_com_overflow_gera_erro():
+    # NUME-6: antes retornava inf/nan silenciosamente.
+    with pytest.raises(DomainError):
+        constant_acceleration_state([0, 0, 0], [1e200, 0, 0], [0, 0, 0], 1e200)

@@ -34,6 +34,18 @@ from . import hypotheses as H
 _TWO_PI = 2.0 * math.pi
 _ORBIT_HYPOTHESES = (H.TWO_BODY, H.NO_PERTURBATIONS, H.CLASSICAL, H.MU_GIVEN, H.RADIUS_FROM_CENTER)
 _CIRCULAR = "Órbita perfeitamente circular (excentricidade nula)."
+_ELLIPSE_HYPOTHESES = (
+    "Órbita elíptica ou circular.",
+    H.TWO_BODY,
+    H.NO_PERTURBATIONS,
+    H.CLASSICAL,
+    H.RADIUS_FROM_CENTER,
+)
+_REFERENCES = (
+    "Curtis, H. D. Orbital Mechanics for Engineering Students. Elsevier.",
+    "Vallado, D. A. Fundamentals of Astrodynamics and Applications. Microcosm Press.",
+)
+_MAX_TOL = 1e-3
 _MU = ("Parâmetro gravitacional do corpo central (G*M)", "m^3/s^2")
 _R = ("Distância ao centro do corpo central", "m")
 
@@ -45,6 +57,7 @@ _R = ("Distância ao centro do corpo central", "m")
     unit="m/s",
     parameters={"mu": _MU, "r": ("Raio da órbita circular", "m")},
     hypotheses=(_CIRCULAR, *_ORBIT_HYPOTHESES),
+    references=_REFERENCES,
 )
 def circular_orbital_speed(mu: float, r: float) -> float:
     """Velocidade de uma órbita circular de raio ``r``, em m/s."""
@@ -59,6 +72,7 @@ def circular_orbital_speed(mu: float, r: float) -> float:
     unit="s",
     parameters={"mu": _MU, "a": ("Semieixo maior da elipse (positivo)", "m")},
     hypotheses=("Órbita fechada (elíptica ou circular).", *_ORBIT_HYPOTHESES),
+    references=_REFERENCES,
 )
 def orbital_period(mu: float, a: float) -> float:
     """Período de uma órbita elíptica de semieixo maior ``a``, em s."""
@@ -73,6 +87,7 @@ def orbital_period(mu: float, a: float) -> float:
     unit="s",
     parameters={"mu": _MU, "r": ("Raio da órbita circular", "m")},
     hypotheses=(_CIRCULAR, *_ORBIT_HYPOTHESES),
+    references=_REFERENCES,
 )
 def circular_orbital_period(mu: float, r: float) -> float:
     """Período de uma órbita circular de raio ``r``, em s."""
@@ -87,6 +102,7 @@ def circular_orbital_period(mu: float, r: float) -> float:
     unit="m",
     parameters={"mu": _MU, "T": ("Período orbital desejado", "s")},
     hypotheses=(_CIRCULAR, *_ORBIT_HYPOTHESES),
+    references=_REFERENCES,
 )
 def circular_orbit_radius(mu: float, T: float) -> float:  # noqa: N803 (símbolo da fórmula)
     """Raio (m) da órbita circular cujo período é ``T``."""
@@ -101,6 +117,7 @@ def circular_orbit_radius(mu: float, T: float) -> float:  # noqa: N803 (símbolo
     unit="J/kg",
     parameters={"mu": _MU, "r": _R, "v": ("Módulo da velocidade relativa ao corpo central", "m/s")},
     hypotheses=(H.TWO_BODY, H.POTENTIAL_ZERO_AT_INFINITY, H.CLASSICAL, H.MU_GIVEN, H.RADIUS_FROM_CENTER),
+    references=_REFERENCES,
 )
 def specific_orbital_energy(mu: float, r: float, v: float) -> float:
     """Energia mecânica por unidade de massa do veículo, em J/kg (= m²/s²).
@@ -122,6 +139,7 @@ def specific_orbital_energy(mu: float, r: float, v: float) -> float:
         "a": ("Semieixo maior (positivo: elipse; negativo: hipérbole)", "m"),
     },
     hypotheses=_ORBIT_HYPOTHESES,
+    references=_REFERENCES,
 )
 def vis_viva_speed(mu: float, r: float, a: float) -> float:
     """Velocidade (m/s) na distância ``r`` de uma órbita de semieixo maior ``a``."""
@@ -144,6 +162,7 @@ def vis_viva_speed(mu: float, r: float, a: float) -> float:
     unit="m/s",
     parameters={"mu": _MU, "r": _R},
     hypotheses=(*_ORBIT_HYPOTHESES, H.POTENTIAL_ZERO_AT_INFINITY),
+    references=_REFERENCES,
 )
 def escape_speed(mu: float, r: float) -> float:
     """Menor velocidade (m/s) que leva a uma trajetória aberta (ε = 0) a partir da distância ``r``."""
@@ -158,6 +177,7 @@ def escape_speed(mu: float, r: float) -> float:
     unit="m",
     parameters={"mu": _MU, "epsilon": ("Energia orbital específica (não nula)", "J/kg")},
     hypotheses=(*_ORBIT_HYPOTHESES, "Resultado negativo indica trajetória hiperbólica (ε > 0)."),
+    references=_REFERENCES,
 )
 def semi_major_axis_from_energy(mu: float, epsilon: float) -> float:
     """Semieixo maior (m); positivo para ε < 0 (elipse) e negativo para ε > 0 (hipérbole)."""
@@ -181,7 +201,8 @@ def _ellipse_params(a: float, e: float) -> tuple[float, float]:
     expression="r_p = a*(1 - e)",
     unit="m",
     parameters={"a": ("Semieixo maior", "m"), "e": ("Excentricidade (0 ≤ e < 1)", "1")},
-    hypotheses=("Órbita elíptica ou circular.", *_ORBIT_HYPOTHESES),
+    hypotheses=_ELLIPSE_HYPOTHESES,
+    references=_REFERENCES,
 )
 def periapsis_radius(a: float, e: float) -> float:
     """Raio de periapse (m) de uma órbita elíptica."""
@@ -195,7 +216,8 @@ def periapsis_radius(a: float, e: float) -> float:
     expression="r_a = a*(1 + e)",
     unit="m",
     parameters={"a": ("Semieixo maior", "m"), "e": ("Excentricidade (0 ≤ e < 1)", "1")},
-    hypotheses=("Órbita elíptica ou circular.", *_ORBIT_HYPOTHESES),
+    hypotheses=_ELLIPSE_HYPOTHESES,
+    references=_REFERENCES,
 )
 def apoapsis_radius(a: float, e: float) -> float:
     """Raio de apoapse (m) de uma órbita elíptica."""
@@ -245,52 +267,69 @@ class TwoBodyOrbit:
 def orbit_from_state(mu: float, position: object, velocity: object, tol: float = 1e-10) -> TwoBodyOrbit:
     """Calcula a cônica de dois corpos a partir de posição (m) e velocidade (m/s) relativas.
 
-    A classificação usa a excentricidade com tolerância ``tol``: ``e < tol`` é circular e
-    ``|e − 1| ≤ tol`` é parabólica. Trajetórias com momento angular desprezível
-    (``|h| ≤ tol·|r|·|v|``) são classificadas como radiais.
+    Classificação, com tolerância adimensional ``tol`` (padrão 1e-10, máximo 1e-3):
+
+    * radial (degenerada) se ``|h| ≤ tol·|r|·|v|``;
+    * circular se ``e < tol``;
+    * parabólica se ``|e − 1| ≤ tol`` **e** ``|ε| ≤ tol·μ/r`` (energia desprezível);
+    * caso contrário, elíptica se ``ε < 0`` e hiperbólica se ``ε > 0``.
+
+    O teste de energia evita que trajetórias quase radiais — cuja excentricidade é próxima de
+    1 qualquer que seja a energia — sejam rotuladas como parabólicas com semieixo infinito.
+    Trajetórias radiais com energia desprezível têm ``a = ∞``.
     """
     mu = as_positive("mu", mu)
     tol = as_positive("tol", tol)
+    if tol > _MAX_TOL:
+        raise InvalidParameterError(f"A tolerância 'tol' deve estar em (0, {_MAX_TOL:g}]; recebido {tol!r}.")
     r_vec = as_vector("position", position)
     v_vec = as_vector("velocity", velocity)
-    r = float(np.linalg.norm(r_vec))
+    r = math.hypot(*r_vec)  # normas com reescala interna (sem overflow/underflow de |x|²)
     if r == 0.0:
         raise DomainError("A posição não pode coincidir com o centro do corpo central.")
-    v2 = float(np.dot(v_vec, v_vec))
-    v = math.sqrt(v2)
+    v = math.hypot(*v_vec)
+    v2 = v * v
 
-    energy = 0.5 * v2 - mu / r
-    h_vec = np.cross(r_vec, v_vec)
-    h = float(np.linalg.norm(h_vec))
-    e_vec = ((v2 - mu / r) * r_vec - float(np.dot(r_vec, v_vec)) * v_vec) / mu
-    e = float(np.linalg.norm(e_vec))
+    with np.errstate(over="ignore", invalid="ignore"):
+        energy = 0.5 * v2 - mu / r
+        h_vec = np.cross(r_vec, v_vec)
+        e_vec = ((v2 - mu / r) * r_vec - float(np.dot(r_vec, v_vec)) * v_vec) / mu
+    h = math.hypot(*h_vec)
+    e = math.hypot(*e_vec)
     p = h * h / mu
+    if not all(math.isfinite(x) for x in (energy, h, e, p)):
+        raise DomainError("Vetor de estado fora do intervalo representável em ponto flutuante de 64 bits.")
+    h_vec.flags.writeable = False
+    e_vec.flags.writeable = False
 
+    negligible_energy = abs(energy) <= tol * mu / r
     if h <= tol * r * v:
         kind = OrbitType.RADIAL
     elif e < tol:
         kind = OrbitType.CIRCULAR
-    elif abs(e - 1.0) <= tol:
+    elif abs(e - 1.0) <= tol and negligible_energy:
         kind = OrbitType.PARABOLIC
-    elif e < 1.0:
+    elif energy < 0.0:
         kind = OrbitType.ELLIPTIC
     else:
         kind = OrbitType.HYPERBOLIC
 
-    if kind is OrbitType.PARABOLIC or energy == 0.0:
+    if kind is OrbitType.PARABOLIC or energy == 0.0 or (kind is OrbitType.RADIAL and negligible_energy):
         a = math.inf
     else:
         a = -mu / (2.0 * energy)
 
     if kind is OrbitType.RADIAL:
         r_p = 0.0
-        r_a = 2.0 * a if energy < 0.0 else math.inf
+        r_a = 2.0 * a if energy < 0.0 and math.isfinite(a) else math.inf
     else:
         r_p = p / (1.0 + e)
-        r_a = p / (1.0 - e) if kind in (OrbitType.CIRCULAR, OrbitType.ELLIPTIC) else math.inf
+        # a·(1+e) é bem condicionado mesmo com e → 1 (p/(1−e) perderia precisão).
+        r_a = a * (1.0 + e) if kind in (OrbitType.CIRCULAR, OrbitType.ELLIPTIC) else math.inf
 
     period = _TWO_PI * a * math.sqrt(a / mu) if energy < 0.0 and math.isfinite(a) else math.inf
-    inclination = math.acos(max(-1.0, min(1.0, float(h_vec[2]) / h))) if h > 0.0 else math.nan
+    # atan2 é bem condicionado também perto de 0 e de π (acos perderia ~1e-8 rad).
+    inclination = math.atan2(math.hypot(h_vec[0], h_vec[1]), h_vec[2]) if h > 0.0 else math.nan
 
     return TwoBodyOrbit(
         orbit_type=kind,
@@ -336,7 +375,7 @@ def circular_orbit_summary(body: CelestialBody, radius: float) -> CircularOrbitS
     ``body.radius``. Raios menores que o do corpo são rejeitados, pois a órbita o
     intersectaria.
     """
-    r = as_positive("radius", radius)
+    r = as_real("raio", radius)
     if r < body.radius:
         raise DomainError(
             f"Raio orbital ({r:.10g} m) menor que o {body.radius_description} do corpo {body.name} "

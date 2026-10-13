@@ -18,6 +18,7 @@ from enum import Enum
 
 from ..data.constants import AU
 from ..errors import InvalidParameterError, NotFoundError, UnitError
+from .validation import as_real
 
 
 class Dimension(Enum):
@@ -110,12 +111,14 @@ _SI_BY_DIMENSION: dict[Dimension, Unit] = {u.dimension: u for u in _UNIT_LIST if
 
 def get_unit(symbol: str) -> Unit:
     """Retorna a unidade pelo símbolo (aceita alguns sinônimos, como ``au`` e ``m/s2``)."""
+    if not isinstance(symbol, str):
+        raise InvalidParameterError(f"O símbolo da unidade deve ser um texto; recebido {symbol!r}.")
     key = symbol.strip()
     key = _ALIASES.get(key, key)
     unit = _UNITS.get(key)
     if unit is None:
         known = ", ".join(_UNITS)
-        raise NotFoundError(f"Unidade desconhecida: {symbol!r}. Unidades aceitas: {known}.")
+        raise NotFoundError(f"Unidade desconhecida: {key!r}. Unidades aceitas: {known}.")
     return unit
 
 
@@ -136,18 +139,28 @@ def _check_dimension(unit: Unit, expected: Dimension | None) -> None:
         )
 
 
+def _finite_conversion(result: float, value: float, unit: Unit) -> float:
+    if not math.isfinite(result):
+        raise InvalidParameterError(
+            f"A conversão de {value!r} para/de '{unit.symbol}' excede o intervalo representável em ponto flutuante."
+        )
+    return result
+
+
 def to_si(value: float, unit: str, expected: Dimension | None = None) -> float:
     """Converte ``value`` expresso em ``unit`` para o SI."""
+    value = as_real("valor", value)
     u = get_unit(unit)
     _check_dimension(u, expected)
-    return value * u.factor
+    return _finite_conversion(value * u.factor, value, u)
 
 
 def from_si(value: float, unit: str, expected: Dimension | None = None) -> float:
     """Converte ``value`` (em SI) para ``unit``."""
+    value = as_real("valor", value)
     u = get_unit(unit)
     _check_dimension(u, expected)
-    return value / u.factor
+    return _finite_conversion(value / u.factor, value, u)
 
 
 def display_alternatives(si_symbol: str) -> tuple[str, ...]:
@@ -155,14 +168,32 @@ def display_alternatives(si_symbol: str) -> tuple[str, ...]:
     return _DISPLAY_ALTERNATIVES.get(si_symbol, ())
 
 
-_QUANTITY_RE = re.compile(
-    r"^\s*(?P<num>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?)\s*(?P<unit>\S.*?)?\s*$"
-)
+# Aplicada sobre o texto já sem espaços nas pontas (evita retrocesso quadrático no regex).
+_QUANTITY_RE = re.compile(r"^(?P<num>[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?)\s*(?P<unit>\S.*)?$")
+_GROUPED_DIGITS_RE = re.compile(r"^[.,]\d")
+
+
+def _match_quantity(text: object) -> tuple[str, re.Match[str] | None]:
+    """Casa o texto com o formato '<número> [unidade]' e rejeita separadores de milhar."""
+    if not isinstance(text, str):
+        raise InvalidParameterError(f"O valor deve ser um texto; recebido {text!r}.")
+    text = text.strip()
+    match = _QUANTITY_RE.match(text)
+    if match is not None and match.group("unit") and _GROUPED_DIGITS_RE.match(match.group("unit")):
+        raise InvalidParameterError(
+            f"Separador de milhar não é aceito em {text!r}: use um único '.' ou ',' como separador "
+            "decimal (ex.: '6778137', '6778.137 km' ou '6778,137 km')."
+        )
+    return text, match
 
 
 def parse_number(text: str) -> float:
-    """Lê um número real finito; aceita vírgula ou ponto como separador decimal (ISO 80000-1)."""
-    match = _QUANTITY_RE.match(text)
+    """Lê um número real finito; aceita vírgula ou ponto como separador decimal (ISO 80000-1).
+
+    Um único ``.`` ou ``,`` é sempre o separador decimal (``"1.000"`` vale 1); números com
+    mais de um separador (``"1.000.000"``) são rejeitados.
+    """
+    text, match = _match_quantity(text)
     if match is None or match.group("unit"):
         raise InvalidParameterError(f"Valor numérico inválido: {text!r}.")
     value = float(match.group("num").replace(",", "."))
@@ -175,10 +206,12 @@ def parse_quantity(text: str, default_unit: str) -> float:
     """Lê uma grandeza como ``"400 km"`` ou ``"400km"`` e retorna o valor em SI.
 
     Sem unidade explícita, assume-se ``default_unit``. A unidade informada precisa ter a
-    mesma dimensão de ``default_unit``. Separador de milhar não é aceito.
+    mesma dimensão de ``default_unit``. Separador de milhar não é aceito: um único ``.`` ou
+    ``,`` é sempre o separador decimal (``"1.000 km"`` vale 1 km, não 1000 km), e números com
+    mais de um separador (``"6.778.137 km"``) são rejeitados com mensagem explicativa.
     """
     expected = get_unit(default_unit)
-    match = _QUANTITY_RE.match(text)
+    text, match = _match_quantity(text)
     if match is None:
         raise InvalidParameterError(
             f"Grandeza inválida: {text!r}. Use o formato '<número> [unidade]', por exemplo '400 km'."

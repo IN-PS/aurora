@@ -1,5 +1,7 @@
 # AURORA v1.0
 
+*Em desenvolvimento — etapa 1 concluída (versão do pacote: 0.1.0).*
+
 **Plataforma educacional de simulação de radar, satélites e exploração espacial**
 Instituto Regional de Pesquisas Científicas, Tecnologia e Engenharia do Sul de Minas Gerais
 
@@ -21,25 +23,31 @@ Instituto Regional de Pesquisas Científicas, Tecnologia e Engenharia do Sul de 
 ## O que a etapa 1 oferece
 
 - **Calculadora de equações do 2º grau** com discriminante exato (aritmética racional) e
-  fórmula numericamente estável: não confunde raízes próximas com raiz dupla e não perde
-  precisão por cancelamento.
-- **Motor de fórmulas físicas** (18 fórmulas) em unidades do SI, cada uma com expressão,
-  unidade do resultado, unidade e descrição de cada parâmetro e lista de hipóteses:
-  - cinemática do movimento uniformemente variado (posição, velocidade, deslocamento,
-    aceleração média, Torricelli), em 1D e em 3D (vetorial);
-  - gravitação universal de Newton (força, μ = G·M, aceleração, superposição de várias massas);
+  fórmula numericamente estável: os decimais digitados são lidos sem arredondamento
+  (`x² + 0,6x + 0,09` tem raiz dupla), raízes próximas não são confundidas com raiz dupla, e
+  coeficientes de 10⁻³²⁴ a 10³⁰⁸ dão raízes com erro de poucos ulp.
+- **Motor de fórmulas físicas**: 18 fórmulas registradas, em unidades do SI, cada uma com
+  expressão, unidade do resultado, unidade e descrição de cada parâmetro e lista de
+  hipóteses — acessíveis pela interface (`aurora formulas` / `aurora calcular`):
+  - cinemática do movimento uniformemente variado em 1D (posição, velocidade,
+    deslocamento, aceleração média, Torricelli);
+  - gravitação universal de Newton (força, μ = G·M, aceleração);
   - órbitas circulares e elípticas (velocidade circular, período, raio por período, energia
-    específica, vis-viva, velocidade de escape, semieixo maior, periapse/apoapse) e
-    classificação da cônica a partir do vetor de estado.
+    específica, vis-viva, velocidade de escape, semieixo maior, periapse/apoapse).
+- **API Python adicional** (somente como biblioteca, sem comando na interface): estado 3D
+  no MUV, instantes de passagem por uma posição, superposição gravitacional de várias
+  massas pontuais e classificação da cônica a partir do vetor de estado.
 - **Unidades**: entrada em `km`, `ua`, `h`, `km/s`, `km^3/s^2` etc., com conversão para o SI e
   verificação de dimensão (não aceita `400 s` onde se espera um comprimento).
 - **Validação de entradas** com mensagens em português (NaN, infinito, texto, valores fora
-  do domínio, órbita abaixo da superfície…).
-- **Procedência explícita**: todo resultado é marcado como *cálculo analítico* e exibido com
-  aviso de que não é medição.
+  do domínio, órbita abaixo da superfície, valores fora do intervalo do `float64`…).
+- **Procedência explícita**: todo resultado físico (fórmulas e órbitas) é marcado como
+  *cálculo analítico* e exibido com aviso de que não é medição.
 - **Interface de linha de comando** em português, com exportação em JSON.
-- **143 testes automatizados** (pytest), incluindo identidades analíticas e casos de
-  referência conhecidos (órbita geoestacionária, período de uma órbita de 1 ua).
+- **220 testes automatizados** (pytest), incluindo identidades analíticas, casos de
+  referência conhecidos (órbita geoestacionária, período de uma órbita de 1 ua), conversão
+  ida e volta elementos → estado → elementos e entradas extremas. Integração contínua no
+  GitHub Actions com Python 3.10 a 3.14.
 
 ## Instalação
 
@@ -98,9 +106,50 @@ Observações:
 
 - Valores sem unidade são interpretados na unidade SI do parâmetro (veja `aurora formulas CHAVE`).
 - A entrada aceita ponto ou vírgula decimal (`9,81` ou `9.81`); a saída usa ponto, como é
-  usual em software científico (a ISO 80000-1 admite ambos). Não use separador de milhar.
+  usual em software científico (a ISO 80000-1 admite ambos).
+- **Não use separador de milhar.** Um único `.` ou `,` é sempre o separador decimal:
+  `"1.000 km"` vale **1 km**, não 1000 km. Números com mais de um separador
+  (`"6.778.137 km"`) são rejeitados com mensagem explicativa. As entradas são sempre
+  ecoadas convertidas para o SI, para conferência.
 - Números negativos funcionam diretamente (`aurora quadratica 1 -1e8 1`).
-- `--json` exporta o resultado com entradas, unidades, hipóteses e procedência.
+- As opções podem vir em qualquer posição (`aurora calcular F --json mu=1 r=1`).
+- `--json` exporta o resultado com entradas, unidades, hipóteses e procedência. O texto é
+  escrito em ASCII com escapes `\uXXXX` (μ, ç, ☉…), que qualquer leitor de JSON decodifica,
+  para não ser corrompido em terminais que não usam UTF-8. Valores não finitos, como um Δ
+  que excede o `float64`, aparecem como os textos `"inf"`, `"-inf"` ou `"nan"`.
+
+## Uso no Android
+
+A etapa 1 **não tem interface gráfica nem aplicativo Android**: a interface é a linha de
+comando, com saída em texto ou JSON. No Android ela pode ser usada em um terminal Linux,
+como o [Termux](https://termux.dev):
+
+1. Instale o Termux pelo F-Droid ou pelas versões publicadas no GitHub do projeto (os
+   mantenedores não recomendam a versão da Google Play, que está desatualizada).
+2. No Termux:
+
+   ```bash
+   pkg update
+   pkg install git python python-numpy   # NumPy pré-compilado do repositório do Termux
+   git clone https://github.com/fishing-ainpm/Radar-system-.git
+   cd Radar-system-
+   python -m aurora --ajuda
+   python -m aurora orbita-circular --corpo terra --altitude "400 km"
+   python -m aurora quadratica 1 -3 2
+   ```
+
+3. Opcional: `pip install pytest` e `python -m pytest` para executar os testes;
+   `pip install -e .` para ter o comando `aurora`. Prefira o pacote `python-numpy` a
+   `pip install numpy`, que no Termux exige compilação.
+4. Para abrir um resultado em outro aplicativo, exporte em JSON
+   (`python -m aurora ... --json > resultado.json`) e use `termux-setup-storage` para dar
+   acesso ao armazenamento compartilhado do aparelho.
+
+**Situação da verificação:** estes passos ainda não foram executados em um aparelho Android.
+Foi verificado, em Linux x86-64, que todos os testes passam com Python 3.14.6 e NumPy 2.5.4
+(o repositório do Termux distribui Python 3.14 e NumPy 2.4 em outubro de 2026) e com Python
+3.10 a 3.13. Um painel gráfico (aplicação web local, que poderia ser aberta no navegador do
+celular) está apenas proposto para as etapas 2–4.
 
 ## Uso como biblioteca
 
@@ -123,13 +172,19 @@ orbita.orbit_type, orbita.eccentricity, orbita.period
 ```
 
 Todas as funções recebem e retornam valores no SI; erros de entrada levantam exceções da
-hierarquia `aurora.errors.AuroraError` com mensagens em português.
+hierarquia `aurora.errors.AuroraError` com mensagens em português. As fórmulas são
+registradas ao importar `aurora.physics` (ou qualquer um de seus módulos). Coeficientes
+`int` ou `fractions.Fraction` passados a `solve_quadratic` são usados com valor exato;
+`float` é usado com seu valor binário exato (`0.1` em `float` não é exatamente 1/10).
 
 ## Testes
 
 ```bash
 pytest
 ```
+
+O fluxo `.github/workflows/testes.yml` executa a suíte no GitHub Actions com Python 3.10,
+3.11, 3.12, 3.13 e 3.14, e com a versão mínima declarada do NumPy (1.24).
 
 ## Estrutura do repositório
 
@@ -144,9 +199,12 @@ tests/                 testes automatizados (pytest)
 docs/
   ARQUITETURA.md       arquitetura, decisões tecnológicas, separação simulador × hardware, roteiro
   MODELOS_FISICOS.md   fórmulas, unidades, hipóteses, precisão numérica, validação e limitações
+  AUDITORIA_ETAPA1.md  relatório da auditoria técnica da etapa 1 e correções aplicadas
+.github/workflows/     integração contínua (pytest em Python 3.10–3.14)
 ```
 
 ## Documentação
 
 - [Arquitetura e roteiro](docs/ARQUITETURA.md)
 - [Modelos físicos, hipóteses e validação](docs/MODELOS_FISICOS.md)
+- [Auditoria técnica da etapa 1](docs/AUDITORIA_ETAPA1.md)
