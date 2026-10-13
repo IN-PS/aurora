@@ -28,3 +28,11 @@ class NotFoundError(AuroraError, LookupError):
 
     def __str__(self) -> str:  # LookupError herdaria a representação entre aspas de KeyError
         return str(self.args[0]) if self.args else ""
+
+
+class SimulationError(AuroraError):
+    """Falha da simulação numérica (integrador não convergiu, estado não representável…)."""
+
+
+class DependencyError(AuroraError):
+    """Dependência opcional ausente (por exemplo, a biblioteca de gráficos)."""

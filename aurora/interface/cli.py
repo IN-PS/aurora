@@ -17,23 +17,32 @@ A opção ``--json`` exporta o resultado com entradas, unidades, hipóteses e pr
 from __future__ import annotations
 
 import argparse
-import json
 import math
+import os
 import re
 import sys
 from collections.abc import Sequence
 from fractions import Fraction
 from typing import Any
 
-from .. import __version__, physics  # noqa: F401  (importar ``physics`` registra as fórmulas)
+from .. import (  # noqa: F401  (importar ``physics`` registra as fórmulas)
+    __version__,
+    physics,
+)
 from ..core import units
 from ..core.formula import Formula, FormulaResult, get_formula, list_formulas
 from ..core.provenance import DataOrigin
 from ..data.bodies import get_body, list_bodies
 from ..data.constants import ALL_CONSTANTS
 from ..errors import AuroraError, InvalidParameterError
-from ..physics.orbits import CircularOrbitSummary, circular_orbit_summary, radius_from_altitude
+from ..physics.orbits import (
+    CircularOrbitSummary,
+    circular_orbit_summary,
+    radius_from_altitude,
+)
 from ..physics.quadratic import QuadraticSolution, RootKind, solve_quadratic
+from ._common import _fmt, _fmt_quantity, _print_footer, _print_json, _print_list
+from .cli_simulation import add_simulation_commands
 
 PROG = "aurora"
 
@@ -43,64 +52,10 @@ PROG = "aurora"
 # --------------------------------------------------------------------------------------
 
 
-def _fmt(x: float, digits: int = 10) -> str:
-    if math.isnan(x):
-        return "indefinido"
-    if math.isinf(x):
-        return "∞" if x > 0 else "−∞"
-    return f"{x + 0.0:.{digits}g}"  # "+ 0.0" evita exibir "-0"
-
-
-def _fmt_quantity(value: float, unit: str) -> str:
-    """Valor na unidade SI seguido de unidades alternativas, ex.: '7668.56 m/s (7.66856 km/s)'."""
-    text = f"{_fmt(value)} {unit}"
-    if math.isfinite(value):
-        alts = []
-        for alt in units.display_alternatives(unit):
-            try:
-                converted = units.from_si(value, alt)
-            except AuroraError:  # conversão apenas ilustrativa: omitida se exceder o float64
-                continue
-            if 0.01 <= abs(converted) < 1e9:  # omite conversões pouco legíveis (ex.: 3e-11 ua)
-                alts.append(f"{_fmt(converted, 7)} {alt}")
-        if alts:
-            text += f"  ({'; '.join(alts)})"
-    return text
-
-
 def _fmt_complex(z: complex) -> str:
     sign = "+" if z.imag >= 0 else "−"
     return f"{_fmt(z.real)} {sign} {_fmt(abs(z.imag))}·i"
 
-
-def _json_safe(obj: Any) -> Any:
-    """Prepara para JSON estrito: não finitos viram os textos "inf", "-inf" ou "nan"; −0.0 vira 0.0."""
-    if isinstance(obj, float):
-        if not math.isfinite(obj):
-            return "nan" if math.isnan(obj) else ("inf" if obj > 0 else "-inf")
-        return obj + 0.0
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(v) for v in obj]
-    return obj
-
-
-def _print_json(data: Any) -> None:
-    # ensure_ascii: caracteres como μ, ☉ e ç viram escapes \\uXXXX e não são corrompidos quando a
-    # saída padrão não é UTF-8 (ex.: redirecionamento no Windows).
-    print(json.dumps(_json_safe(data), ensure_ascii=True, indent=2, allow_nan=False))
-
-
-def _print_list(title: str, items: Sequence[str]) -> None:
-    print(title)
-    indent = " " * (len(title) - len(title.lstrip()) + 2)
-    for item in items:
-        print(f"{indent}- {item}")
-
-
-def _print_footer(origin: DataOrigin) -> None:
-    print(f"Natureza do resultado: {origin.disclaimer}")
 
 
 # --------------------------------------------------------------------------------------
@@ -385,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog=PROG,
         description=(
-            "AURORA — painel de cálculos físicos (etapa 1: fundamentos matemáticos).\n"
+            "AURORA — cálculos físicos e simulação orbital (etapas 1 e 2).\n"
             "Todos os resultados são calculados com modelos idealizados; nenhum é medição."
         ),
     )
@@ -439,6 +394,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("constantes", help="lista as constantes físicas e suas fontes")
     p.set_defaults(handler=_cmd_constants)
 
+    add_simulation_commands(sub)
+
     return parser
 
 
@@ -458,12 +415,35 @@ def _configure_output() -> None:
             pass
 
 
+def _silence_closed_stdout() -> None:
+    """Redireciona a saída padrão para /dev/null depois que o leitor fechou o pipe.
+
+    Sem isso, o Python tentaria descarregar o buffer ao encerrar e imprimiria outro erro
+    (receita da documentação do módulo ``signal``, seção "Note on SIGPIPE").
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (AttributeError, OSError, ValueError):  # saída capturada (testes) ou sem descritor
+        pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Ponto de entrada. Retorna 0 em caso de sucesso e 1 em erro de cálculo ou de entrada.
 
     Como no ``argparse``, erros de uso (código 2) e as opções ``--ajuda``/``--versao``
-    (código 0) encerram a execução levantando ``SystemExit``.
+    (código 0) encerram a execução levantando ``SystemExit``. Se a saída for canalizada para
+    um programa que encerra antes de ler tudo (ex.: ``aurora ... | head``), a execução termina
+    em silêncio com código 1, sem rastreamento de pilha.
     """
+    try:
+        return _main(argv)
+    except BrokenPipeError:
+        _silence_closed_stdout()
+        return 1
+
+
+def _main(argv: Sequence[str] | None) -> int:
     _configure_output()
     parser = build_parser()
     args, extras = parser.parse_known_args(_protect_negative_numbers(sys.argv[1:] if argv is None else argv))

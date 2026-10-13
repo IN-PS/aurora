@@ -138,7 +138,7 @@ def test_recarregar_modulo_nao_duplica_nem_quebra_o_registro():
     root = Path(__file__).resolve().parents[1]
     proc = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "18"
+    assert int(proc.stdout.strip()) == len(list_formulas())
 
 
 def test_mensagens_de_busca_de_formula():

@@ -145,6 +145,12 @@ class NewtonianGravity:
     sem efeitos de maré ou de forma (cada fonte é esfericamente simétrica).
     """
 
+    hypotheses: tuple[str, ...] = (
+        "Fontes gravitacionais fixas (sem movimento próprio) em um referencial inercial.",
+        H.POINT_MASSES,
+        H.CLASSICAL,
+    )
+
     def __init__(self, sources: Iterable[PointMass]) -> None:
         self.sources: tuple[PointMass, ...] = tuple(sources)
         if not self.sources:
@@ -162,3 +168,38 @@ class NewtonianGravity:
         for source in self.sources:
             total += point_mass_acceleration(source.mu, position, source.position)
         return total
+
+
+class TwoBodyGravity:
+    """Modelo de dois corpos: massa pontual ``mu`` (m³/s²) fixa na origem do referencial.
+
+    É o modelo usado pelo propagador numérico da etapa 2. A posição recebida é a posição do
+    veículo relativa ao centro do corpo central. ``acceleration`` é chamada milhares de vezes
+    por órbita pelo integrador, por isso não revalida a entrada (que vem do próprio
+    integrador); a origem (r = 0) gera :class:`~aurora.errors.DomainError`.
+
+    Hipóteses: problema de dois corpos com o corpo central em repouso em um referencial
+    inercial e veículo de massa desprezível; corpo central esfericamente simétrico; mecânica
+    newtoniana; sem perturbações (J2, arrasto, terceiros corpos, pressão de radiação).
+    """
+
+    hypotheses: tuple[str, ...] = (H.TWO_BODY, H.POINT_MASSES, H.NO_PERTURBATIONS, H.CLASSICAL, H.MU_GIVEN)
+
+    def __init__(self, mu: float) -> None:
+        self.mu = as_positive("mu", mu)
+
+    def __repr__(self) -> str:
+        return f"TwoBodyGravity(mu={self.mu!r})"
+
+    def describe(self) -> str:
+        return f"dois corpos (μ = {self.mu:.10g} m³/s²)"
+
+    def acceleration(
+        self, position: np.ndarray, velocity: np.ndarray | None = None, time: float = 0.0
+    ) -> np.ndarray:
+        x, y, z = float(position[0]), float(position[1]), float(position[2])
+        r = math.hypot(x, y, z)
+        if r == 0.0:
+            raise DomainError("Posição no centro do corpo central: aceleração indefinida (singularidade).")
+        k = -(self.mu / r / r) / r
+        return np.array((k * x, k * y, k * z))
